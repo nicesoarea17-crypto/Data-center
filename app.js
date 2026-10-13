@@ -28,10 +28,26 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /* =================== Supabase REST client =================== */
-const CFG = window.MFLASH_CONFIG || {};
-// Toleran terhadap URL yang disalin lengkap (mis. .../rest/v1/), cukup ambil https://xxxx.supabase.co
-const BASE = (String(CFG.SUPABASE_URL || "").trim().match(/^https?:\/\/[^\/?#]+/) || [""])[0];
-const KEY = CFG.SUPABASE_ANON_KEY || "";
+// Alamat & kunci Supabase. Dibaca dari config.js; bila penulisannya rusak, dibaca langsung dari teks file,
+// atau dari isian yang disimpan di perangkat ini lewat layar "Sambungkan ke Supabase".
+const cleanUrl = u => (String(u || "").trim().match(/^https?:\/\/[^\/?#\s"'“”]+/) || [""])[0];
+const URL_RE = /https:\/\/[a-z0-9-]+\.supabase\.co/i;
+const KEY_RE = /(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|sb_publishable_[A-Za-z0-9_-]+)/;
+let BASE = "", KEY = "";
+function setConn(url, key) { BASE = cleanUrl(url); KEY = String(key || "").trim().replace(/^["'“”]+|["'“”,;]+$/g, ""); }
+const validConn = () => !!BASE && !/ISI-PROJECT/i.test(BASE) && KEY_RE.test(KEY);
+async function resolveConfig() {
+  const C = window.MFLASH_CONFIG;
+  if (C) { setConn(C.SUPABASE_URL, C.SUPABASE_ANON_KEY); if (validConn()) return "config"; }
+  try { // config.js rusak: ambil alamat dan kunci langsung dari teksnya
+    const t = await (await fetch("config.js", { cache: "no-store" })).text();
+    const u = t.match(URL_RE), k = t.match(KEY_RE);
+    if (u && k) { setConn(u[0], k[0]); if (validConn()) return "teks"; }
+  } catch (e) {}
+  const saved = LS.get("mfdc-conn");
+  if (saved) { setConn(saved.url, saved.key); if (validConn()) return "perangkat"; }
+  return null;
+}
 // Tanpa login: semua permintaan memakai anon key; aturan akses diatur di database.
 async function rest(path, { method = "GET", body, headers = {} } = {}) {
   let r;
@@ -85,17 +101,51 @@ const S = { cabangs: BRANCHES.slice(), kodeMap: {}, page: LS.get("mfdc-page") ||
 const root = () => $("#root");
 
 async function boot() {
-  if (!window.MFLASH_CONFIG) {
-    root().innerHTML = `<div class="wrap"><div class="notice bad">File <b>config.js</b> tidak terbaca atau penulisannya salah. Cek tanda kutip "…" di kedua isian dan tanda koma di akhir baris SUPABASE_URL, atau unggah ulang config.js lalu isi lagi.</div></div>`; return;
-  }
-  if (!BASE || /ISI-PROJECT/.test(BASE) || !KEY || /ISI-ANON/.test(KEY)) {
-    root().innerHTML = `<div class="wrap"><div class="notice bad">Aplikasi belum disambungkan ke Supabase. Isi SUPABASE_URL dan SUPABASE_ANON_KEY di file <b>config.js</b>.</div></div>`; return;
-  }
+  const src = await resolveConfig();
+  if (!src) return renderConnect();
   try {
     const cab = await db.select("cabang", { select: "nama,urut,kode_accurate", order: "urut" });
     if (cab.rows.length) { S.cabangs = cab.rows.map(c => c.nama); S.kodeMap = Object.fromEntries(cab.rows.filter(c => c.kode_accurate).map(c => [c.kode_accurate.toLowerCase(), c.nama])); }
-  } catch (e) { root().innerHTML = `<div class="wrap"><div class="notice bad">${esc(e.message)}</div></div>`; return; }
+  } catch (e) { return renderConnect(friendlyConnErr(e.message)); }
   renderShell();
+}
+function friendlyConnErr(m) {
+  if (/invalid path/i.test(m)) return "Alamat Supabase salah. Isi hanya sampai .supabase.co, contoh https://abcdxyz.supabase.co";
+  if (/invalid api key|no api key|jwt|401/i.test(m)) return "Kunci (anon / publishable key) salah atau tidak lengkap. Salin ulang dari Supabase.";
+  if (/relation .*cabang.* does not exist|could not find the table|404/i.test(m)) return "Database belum disiapkan. Jalankan supabase/schema.sql di Supabase → SQL Editor, lalu coba lagi.";
+  return m;
+}
+// Layar sambungan: isi alamat & kunci tanpa mengedit kode
+function renderConnect(err) {
+  const saved = LS.get("mfdc-conn") || {};
+  root().innerHTML = `<div class="login"><form id="fConn" novalidate style="width:min(100%,520px)">
+    <div><span class="eyebrow">MFlash</span><h1>Sambungkan ke Supabase</h1>
+    <p class="sub">Isi dua data dari Supabase → <b>Project Settings → API</b> (atau <b>API Keys</b>). Cukup sekali; setelah tersambung, aplikasi memberi isi <b>config.js</b> yang siap disalin ke GitHub.</p></div>
+    ${err ? `<div class="notice bad">${esc(err)}</div>` : ""}
+    <label>Project URL<input id="cUrl" placeholder="https://abcdxyz.supabase.co" value="${esc(saved.url || (BASE && !/ISI-PROJECT/i.test(BASE) ? BASE : ""))}" autocomplete="off"></label>
+    <label>anon public key / publishable key<input id="cKey" placeholder="eyJhbGciOi… atau sb_publishable_…" value="${esc(saved.key || (KEY_RE.test(KEY) ? KEY : ""))}" autocomplete="off"></label>
+    <div class="err" id="cErr" role="alert"></div>
+    <button class="primary" id="cBtn" type="submit">Sambungkan</button>
+    <div id="cOut"></div>
+  </form></div>`;
+  $("#fConn").onsubmit = async e => {
+    e.preventDefault(); const b = $("#cBtn"); $("#cErr").textContent = "";
+    const um = $("#cUrl").value.match(URL_RE), km = $("#cKey").value.match(KEY_RE);
+    if (!um) return $("#cErr").textContent = "Project URL harus berbentuk https://xxxxx.supabase.co";
+    if (!km) return $("#cErr").textContent = "Kunci tidak dikenali. Salin anon public key (diawali eyJ) atau publishable key (diawali sb_publishable_).";
+    setConn(um[0], km[0]); b.disabled = true; b.textContent = "Mencoba…";
+    try { await db.select("cabang", { select: "nama", limit: 1 }); }
+    catch (er) { $("#cErr").textContent = friendlyConnErr(er.message); b.disabled = false; b.textContent = "Sambungkan"; return; }
+    LS.set("mfdc-conn", { url: BASE, key: KEY });
+    const cfg = `window.MFLASH_CONFIG = {\n  SUPABASE_URL: "${BASE}",\n  SUPABASE_ANON_KEY: "${KEY}"\n};\n`;
+    $("#cOut").innerHTML = `<div class="notice ok" style="display:grid;gap:8px"><b>Tersambung.</b>
+      <span>Aplikasi sudah bisa dipakai di perangkat ini. Agar semua orang langsung tersambung, ganti seluruh isi <b>config.js</b> di GitHub dengan teks berikut (klik Salin, lalu di GitHub: buka config.js → ikon pensil → hapus semua isi → tempel → Commit changes):</span>
+      <textarea id="cCfg" readonly rows="5" style="font-family:var(--f-data);font-size:12px;width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--surface);color:var(--ink)">${esc(cfg)}</textarea>
+      <div class="toolbar"><button type="button" id="cCopy">Salin isi config.js</button><button type="button" class="primary" id="cGo">Buka aplikasi</button></div></div>`;
+    b.hidden = true;
+    $("#cCopy").onclick = async () => { const t = $("#cCfg"); try { await navigator.clipboard.writeText(t.value); $("#cCopy").textContent = "Tersalin"; } catch (x) { t.select(); } };
+    $("#cGo").onclick = () => boot();
+  };
 }
 
 /* =================== shell =================== */
