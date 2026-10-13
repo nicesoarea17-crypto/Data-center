@@ -20,7 +20,7 @@ Aplikasi web untuk menggabungkan data Accurate seluruh cabang MFlash (Daftar Pel
 
 Aplikasi ini sengaja dibuat **tanpa login**. Akibatnya:
 - Siapa pun yang mengetahui alamat aplikasi bisa melihat seluruh data, termasuk nama dan nomor WA pelanggan, serta bisa mengunggah data untuk cabang mana pun. Bagikan alamatnya hanya ke tim internal.
-- Data **tidak bisa dihapus atau diubah langsung** dari aplikasi maupun lewat API. Faktur hanya bisa diganti dengan mengunggah ulang faktur bernomor sama. Kunci ini dipasang di database.
+- Data tidak bisa diubah langsung. Penghapusan hanya lewat menu **Hapus / Reset data** dengan konfirmasi, dan bisa dilindungi **PIN hapus** (lihat di bawah).
 - Setiap unggahan mencatat **nama pengunggah** (diisi sendiri) di Riwayat unggah.
 
 **Opsional, bila nanti ingin dibatasi tanpa mengubah aplikasi:** pasang **Cloudflare Access** di depan alamat aplikasi (Cloudflare → Zero Trust → Access → Applications). Pengunjung cukup memasukkan email kantor lalu menerima kode, tanpa akun atau kata sandi di aplikasi. Layanan ini gratis untuk tim kecil.
@@ -76,7 +76,20 @@ Setiap kali file di GitHub diubah, Cloudflare akan memperbarui aplikasinya secar
 ## Isi menu
 - **Dashboard Gross Profit:** filter cabang, bulan, dan pilar. Berisi GP per pilar, tren harian, laporan per cabang, GP per kategori, barang penyumbang GP terbesar, dan penjualan rugi.
 - **Tab Sewa:** GP pilar SEWA ditambah **jumlah unit (total QTY)** per cabang, per hari, dan per pelanggan.
-- **Tab Service & Maintenance:** GP pilar Service/Maintenance ditambah **jumlah transaksi corporate termaintenance** (faktur ke pelanggan berkategori Corporate) dan jumlah perusahaan corporate-nya.
+- **Tab Service & Maintenance Corporate:** hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). GP pilar ini ditambah **corporate termaintenance** = jumlah faktur (transaksi) pilar Service & Maintenance, per cabang, per hari, dan per pelanggan.
+
+## Hapus / Reset data (pembaruan harian)
+Menu **Unggah Data → Hapus / Reset data**:
+- Pilih cabang (atau semua cabang) dan jenis data (semua, faktur saja, atau pelanggan saja), ketik **HAPUS**, lalu klik **Hapus data**. Setelah itu unggah ulang file Accurate terbaru.
+- Di **Riwayat unggah**, tombol **Hapus** (klik dua kali) menghapus data dari satu unggahan.
+- Data yang dihapus tidak bisa dikembalikan.
+
+**PIN hapus (disarankan, karena aplikasi tanpa login).** Jalankan di Supabase → SQL Editor (ganti 1234):
+```sql
+insert into public.app_setting values ('pin_hapus','1234')
+on conflict (kunci) do update set nilai = excluded.nilai;
+```
+Setelah dipasang, penghapusan wajib memasukkan PIN. Untuk mematikan PIN: `delete from public.app_setting where kunci = 'pin_hapus';`
 
 ## Cara kerja data
 - **Kolom CABANG** selalu menjadi kolom pertama. Cabang dikenali dari nama file Accurate (misal `003mflashbintar` → Bintara) dan bisa diubah sebelum diunggah.

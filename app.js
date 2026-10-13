@@ -586,22 +586,66 @@ function mapFaktur(f) {
 }
 let UP = [];
 const uploader = () => (LS.get("mfdc-uploader") || "").trim();
+let U_TAB = "unggah";
 async function pageUnggah(el) {
-  const { rows: hist } = await db.select("uploads", { select: "cabang,jenis,nama_file,jumlah_baris,periode_dari,periode_sampai,diunggah_nama,diunggah_pada", order: "diunggah_pada.desc", limit: 30 });
+  const [{ rows: hist }, pinOn, stat] = await Promise.all([
+    db.select("uploads", { select: "id,cabang,jenis,nama_file,jumlah_baris,periode_dari,periode_sampai,diunggah_nama,diunggah_pada", order: "diunggah_pada.desc", limit: 50 }),
+    db.rpc("pin_aktif").catch(() => false), db.rpc("kualitas_data").catch(() => [])]);
+  const histHtml = `<section class="panel"><h2>Riwayat unggah</h2>
+    <p class="sub">Tombol <b>Hapus</b> menghapus data yang berasal dari unggahan itu. Pelanggan yang sudah diperbarui oleh unggahan lain yang lebih baru tidak ikut terhapus.</p>
+    <div class="tablebox"><table><thead><tr><th>Waktu</th><th>Cabang</th><th>Jenis</th><th>File</th><th class="num">Baris</th><th>Periode faktur</th><th>Oleh</th><th></th></tr></thead><tbody>
+    ${hist.map(h => `<tr><td>${fmtDateTime(h.diunggah_pada)}</td><td class="cab">${esc(h.cabang)}</td><td>${h.jenis === "faktur" ? "Faktur Penjualan" : "Data Pelanggan"}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:200px">${esc(h.nama_file)}</td><td class="num">${fmtN(h.jumlah_baris)}</td><td>${h.periode_dari ? fmtDate(h.periode_dari) + " – " + fmtDate(h.periode_sampai) : "–"}</td><td>${esc(h.diunggah_nama || "")}</td><td><button data-delup="${h.id}">Hapus</button></td></tr>`).join("") || `<tr><td colspan="8" class="sub">Belum ada data yang diunggah.</td></tr>`}</tbody></table></div>
+  </section>`;
+  const tot = stat.reduce((o, s) => (o.p += +s.pelanggan, o.f += +s.baris_faktur, o), { p: 0, f: 0 });
   el.innerHTML = `<div style="display:grid;gap:14px">
-  <section class="panel"><div><h2>Unggah file Accurate</h2>
+  <div class="toolbar"><button class="chip" data-ut="unggah" aria-pressed="${U_TAB === "unggah"}">Unggah data</button><button class="chip" data-ut="hapus" aria-pressed="${U_TAB === "hapus"}">Hapus / Reset data</button></div>
+  ${U_TAB === "unggah" ? `<section class="panel"><div><h2>Unggah file Accurate</h2>
     <p class="sub">Unggah export <b>Daftar Pelanggan</b> dan <b>Rincian Faktur Penjualan</b>. Bisa banyak file dari cabang mana saja sekaligus. Pelanggan dengan ID yang sama diperbarui, faktur dengan nomor yang sama diganti versi terbaru, jadi aman mengunggah periode yang tumpang tindih.</p></div>
     <label style="display:grid;gap:4px;font-weight:600;font-size:13px;max-width:360px">Nama pengunggah<input id="upName" value="${esc(LS.get("mfdc-uploader") || "")}" placeholder="mis. Admin Bintara" autocomplete="name"></label>
     <label class="drop" id="drop" tabindex="0"><div><strong>Tarik file .xlsx ke sini, atau klik untuk memilih</strong><span class="sub">Cabang dikenali dari nama file (misal 003mflashbintar → Bintara)</span></div><span class="btn">Pilih file</span>
       <input type="file" id="fileInput" class="hidden-input" accept=".xlsx,.xls" multiple></label>
     <div id="upList"></div>
-  </section>
-  <section class="panel"><h2>Riwayat unggah</h2>
-    <div class="tablebox"><table><thead><tr><th>Waktu</th><th>Cabang</th><th>Jenis</th><th>File</th><th class="num">Baris</th><th>Periode faktur</th><th>Oleh</th></tr></thead><tbody>
-    ${hist.map(h => `<tr><td>${fmtDateTime(h.diunggah_pada)}</td><td class="cab">${esc(h.cabang)}</td><td>${h.jenis === "faktur" ? "Faktur Penjualan" : "Data Pelanggan"}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:200px">${esc(h.nama_file)}</td><td class="num">${fmtN(h.jumlah_baris)}</td><td>${h.periode_dari ? fmtDate(h.periode_dari) + " – " + fmtDate(h.periode_sampai) : "–"}</td><td>${esc(h.diunggah_nama || "")}</td></tr>`).join("") || `<tr><td colspan="7" class="sub">Belum ada data yang diunggah.</td></tr>`}</tbody></table></div>
-  </section></div>`;
-  $("#upName").oninput = e => { LS.set("mfdc-uploader", e.target.value.trim() || null); renderUpList(); };
-  const inp = $("#fileInput"), drop = $("#drop");
+  </section>` : `<section class="panel"><div><h2>Hapus / Reset data</h2>
+    <p class="sub">Untuk pembaruan harian: kosongkan data, lalu unggah ulang file Accurate terbaru di tab <b>Unggah data</b>. Data yang dihapus <b>tidak bisa dikembalikan</b>. Isi database sekarang: <b>${fmtN(tot.p)}</b> pelanggan dan <b>${fmtN(tot.f)}</b> baris faktur.</p></div>
+    <div class="toolbar">
+      <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Cabang<select id="hCab"><option value="">Semua cabang</option>${S.cabangs.map(c => `<option>${esc(c)}</option>`).join("")}</select></label>
+      <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Data yang dihapus<select id="hJenis"><option value="semua">Semua (pelanggan + faktur)</option><option value="faktur">Faktur Penjualan saja</option><option value="pelanggan">Data Pelanggan saja</option></select></label>
+      ${pinOn ? `<label style="display:grid;gap:4px;font-weight:600;font-size:13px">PIN hapus<input id="hPin" type="password" autocomplete="off" style="width:130px"></label>` : ""}
+      <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Ketik HAPUS untuk konfirmasi<input id="hKonf" autocomplete="off" style="width:200px"></label>
+    </div>
+    <p class="sub" id="hInfo"></p>
+    <div class="toolbar"><button class="danger" id="hBtn" disabled>Hapus data</button><span class="sub" id="hMsg" role="status"></span></div>
+    ${pinOn ? "" : `<p class="sub">Belum ada PIN hapus, jadi siapa pun yang membuka aplikasi bisa menghapus data. Cara memasang PIN ada di README (bagian Hapus / Reset).</p>`}
+  </section>`}
+  ${histHtml}</div>`;
+  el.querySelectorAll("[data-ut]").forEach(b => b.onclick = () => { U_TAB = b.dataset.ut; pageUnggah(el); });
+  el.querySelectorAll("[data-delup]").forEach(b => b.onclick = async () => {
+    if (!b.classList.contains("danger")) { b.classList.add("danger"); b.textContent = "Klik lagi untuk hapus"; setTimeout(() => { if (b.isConnected) { b.classList.remove("danger"); b.textContent = "Hapus"; } }, 4000); return; }
+    let pin = null; if (pinOn) { pin = window.prompt ? window.prompt("PIN hapus:") : null; if (!pin) { toast("Masukkan PIN untuk menghapus. Atau gunakan tab Hapus / Reset data."); return; } }
+    b.disabled = true;
+    try { const r = await db.rpc("hapus_upload", { p_upload: +b.dataset.delup, p_pin: pin }); BULAN = null; toast(`Terhapus: ${fmtN(r.pelanggan)} pelanggan, ${fmtN(r.faktur)} baris faktur.`); pageUnggah(el); }
+    catch (e) { toast("Gagal menghapus: " + e.message); b.disabled = false; }
+  });
+  if (U_TAB === "hapus") {
+    const upd = () => {
+      const c = $("#hCab", el).value, j = $("#hJenis", el).value; const rs = c ? stat.filter(s => s.cabang === c) : stat;
+      const p = rs.reduce((o, s) => o + +s.pelanggan, 0), f = rs.reduce((o, s) => o + +s.baris_faktur, 0);
+      $("#hInfo", el).innerHTML = `Akan menghapus ${j !== "faktur" ? `<b>${fmtN(p)}</b> pelanggan` : ""}${j === "semua" ? " dan " : ""}${j !== "pelanggan" ? `<b>${fmtN(f)}</b> baris faktur` : ""} dari <b>${esc(c || "semua cabang")}</b>, beserta riwayat unggahnya.`;
+      $("#hBtn", el).disabled = $("#hKonf", el).value.trim().toUpperCase() !== "HAPUS" || (pinOn && !$("#hPin", el).value);
+    };
+    ["hCab", "hJenis", "hKonf", "hPin"].forEach(id => { const x = $("#" + id, el); if (x) x.oninput = x.onchange = upd; });
+    upd();
+    $("#hBtn", el).onclick = async () => {
+      const b = $("#hBtn", el); b.disabled = true; $("#hMsg", el).textContent = "Menghapus…";
+      try {
+        const r = await db.rpc("hapus_data", { p_cabang: $("#hCab", el).value || null, p_jenis: $("#hJenis", el).value, p_pin: pinOn ? $("#hPin", el).value : null });
+        BULAN = null; toast(`Terhapus: ${fmtN(r.pelanggan)} pelanggan, ${fmtN(r.faktur)} baris faktur.`); U_TAB = "unggah"; pageUnggah(el);
+      } catch (e) { $("#hMsg", el).textContent = "Gagal: " + e.message; upd(); }
+    };
+    return;
+  }
+  $("#upName", el).oninput = e => { LS.set("mfdc-uploader", e.target.value.trim() || null); renderUpList(); };
+  const inp = $("#fileInput", el), drop = $("#drop", el);
   const add = async list => {
     for (const file of [...list]) { try { const f = await parseFile(file); UP = UP.filter(x => x.name !== f.name); UP.push(f); } catch (e) { UP.push({ id: Math.random().toString(36).slice(2), name: file.name, rows: [], kind: "", branch: "", status: "gagal", err: "Gagal dibaca: " + e.message }); } }
     renderUpList();
