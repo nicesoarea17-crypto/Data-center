@@ -30,46 +30,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const CFG = window.MFLASH_CONFIG || {};
 const BASE = String(CFG.SUPABASE_URL || "").replace(/\/+$/, "");
 const KEY = CFG.SUPABASE_ANON_KEY || "";
-const SKEY = "mfdc-session";
-let refreshing = null;
-
-function sess() { return LS.get(SKEY); }
-function setSess(s) { if (s && s.access_token) { s.expires_at = s.expires_at || Math.floor(Date.now() / 1000) + (s.expires_in || 3600); LS.set(SKEY, s); } else LS.set(SKEY, null); }
-async function authCall(path, body, method = "POST", token) {
-  const r = await fetch(BASE + "/auth/v1" + path, { method, headers: { apikey: KEY, "Content-Type": "application/json", Authorization: "Bearer " + (token || KEY) }, body: body ? JSON.stringify(body) : undefined });
-  let j = null; try { j = await r.json(); } catch (e) {}
-  if (!r.ok) throw new Error(authMsg(j, r.status));
-  return j;
-}
-function authMsg(j, st) {
-  const m = (j && (j.error_description || j.msg || j.message || j.error)) || "";
-  if (/invalid login credentials/i.test(m)) return "Email atau kata sandi salah.";
-  if (/email not confirmed/i.test(m)) return "Email belum dikonfirmasi. Minta Super Admin mengaktifkan akun Anda.";
-  if (/password should be/i.test(m)) return "Kata sandi minimal 6 karakter.";
-  return m || "Gagal menghubungi server (" + st + ").";
-}
-async function login(email, password) { const s = await authCall("/token?grant_type=password", { email, password }); setSess(s); return s; }
-async function refreshSession() {
-  if (refreshing) return refreshing;
-  refreshing = (async () => {
-    const s = sess(); if (!s || !s.refresh_token) return false;
-    try { const n = await authCall("/token?grant_type=refresh_token", { refresh_token: s.refresh_token }); n.expires_at = null; setSess(n); return true; }
-    catch (e) { setSess(null); return false; }
-  })();
-  try { return await refreshing; } finally { refreshing = null; }
-}
-async function token() {
-  const s = sess(); if (!s) return null;
-  if (s.expires_at && s.expires_at - 60 < Date.now() / 1000) { if (!(await refreshSession())) return null; }
-  return sess().access_token;
-}
-async function logout() { const t = sess()?.access_token; setSess(null); if (t) { try { await authCall("/logout", null, "POST", t); } catch (e) {} } }
-
-async function rest(path, { method = "GET", body, headers = {}, retry = true } = {}) {
-  const t = await token();
-  if (!t) { sessionExpired(); throw new Error("Sesi berakhir. Silakan masuk lagi."); }
-  const r = await fetch(BASE + "/rest/v1" + path, { method, headers: { apikey: KEY, Authorization: "Bearer " + t, "Content-Type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
-  if (r.status === 401 && retry) { if (await refreshSession()) return rest(path, { method, body, headers, retry: false }); sessionExpired(); throw new Error("Sesi berakhir. Silakan masuk lagi."); }
+// Tanpa login: semua permintaan memakai anon key; aturan akses diatur di database.
+async function rest(path, { method = "GET", body, headers = {} } = {}) {
+  let r;
+  try { r = await fetch(BASE + "/rest/v1" + path, { method, headers: { apikey: KEY, Authorization: "Bearer " + KEY, "Content-Type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) }); }
+  catch (e) { throw new Error("Tidak bisa menghubungi server. Periksa koneksi internet."); }
   if (!r.ok) { let j = null; try { j = await r.json(); } catch (e) {} throw new Error((j && (j.message || j.hint || j.details)) || "Server menolak permintaan (" + r.status + ")."); }
   return r;
 }
@@ -114,79 +79,40 @@ const orSafe = s => String(s).replace(/[,()"\\*:]/g, " ").trim();
 /* =================== state =================== */
 const BRANCHES = ["Klender", "Ceger", "Bintara", "Radjiman", "Jatimulya", "Dramaga", "Condet", "Jatibening", "Sawangan Depok", "Warbong", "Cinere", "Cibinong", "Teluk Jambe Karawang", "Jatiwaringin", "Cikampek", "Cilangkap", "Pejaten", "Cibubur"];
 const PILAR_ORDER = ["SERVICE", "PENJUALAN RITEL", "SEWA", "PENGADAAN CORPORATE"];
-const ROLE_LABEL = { super_admin: "Super Admin", divisi: "Divisi", cabang: "Cabang", menunggu: "Belum aktif" };
-const S = { me: null, cabangs: BRANCHES.slice(), kodeMap: {}, page: LS.get("mfdc-page") || "dashboard" };
+const S = { cabangs: BRANCHES.slice(), kodeMap: {}, page: LS.get("mfdc-page") || "dashboard" };
 const root = () => $("#root");
 
-function sessionExpired() { if (S.me) { S.me = null; renderLogin("Sesi Anda berakhir. Silakan masuk lagi."); } }
-
-/* =================== login =================== */
-function renderLogin(msg) {
-  root().innerHTML = `<div class="login"><form id="fLogin" novalidate>
-    <div><span class="eyebrow">MFlash</span><h1>Data Center</h1><p class="sub">Masuk dengan akun yang dibuat Super Admin.</p></div>
-    ${!BASE || /ISI-PROJECT/.test(BASE) ? `<div class="notice bad">Aplikasi belum disambungkan ke Supabase. Isi SUPABASE_URL dan SUPABASE_ANON_KEY di file <b>config.js</b>.</div>` : ""}
-    <label>Email<input id="lEmail" type="email" autocomplete="username" required></label>
-    <label>Kata sandi<input id="lPass" type="password" autocomplete="current-password" required></label>
-    <div class="err" id="lErr" role="alert">${esc(msg || "")}</div>
-    <button class="primary" id="lBtn" type="submit">Masuk</button>
-  </form></div>`;
-  $("#fLogin").onsubmit = async e => {
-    e.preventDefault(); const b = $("#lBtn"); b.disabled = true; $("#lErr").textContent = "";
-    try { await login($("#lEmail").value.trim(), $("#lPass").value); await boot(); }
-    catch (err) { $("#lErr").textContent = err.message; b.disabled = false; }
-  };
-  $("#lEmail").focus();
-}
-
 async function boot() {
-  if (!sess()) return renderLogin();
+  if (!BASE || /ISI-PROJECT/.test(BASE) || !KEY || /ISI-ANON/.test(KEY)) {
+    root().innerHTML = `<div class="wrap"><div class="notice bad">Aplikasi belum disambungkan ke Supabase. Isi SUPABASE_URL dan SUPABASE_ANON_KEY di file <b>config.js</b>.</div></div>`; return;
+  }
   try {
-    const t = await token(); if (!t) return renderLogin();
-    const u = await authCall("/user", null, "GET", t);
-    const { rows } = await db.select("profiles", { select: "id,email,nama,peran,cabang,divisi", filters: [["id", "eq", u.id]] });
-    S.me = rows[0] || { id: u.id, email: u.email, peran: "menunggu" };
     const cab = await db.select("cabang", { select: "nama,urut,kode_accurate", order: "urut" });
     if (cab.rows.length) { S.cabangs = cab.rows.map(c => c.nama); S.kodeMap = Object.fromEntries(cab.rows.filter(c => c.kode_accurate).map(c => [c.kode_accurate.toLowerCase(), c.nama])); }
-  } catch (e) { return renderLogin(e.message); }
-  if (S.me.peran === "menunggu") {
-    root().innerHTML = `<div class="login"><form><span class="eyebrow">MFlash Data Center</span><h1>Akun belum aktif</h1>
-      <p class="sub">Akun <b>${esc(S.me.email)}</b> sudah terdaftar, tetapi Super Admin belum menentukan perannya. Hubungi Super Admin, lalu muat ulang halaman ini.</p>
-      <button type="button" id="bOut">Keluar</button></form></div>`;
-    $("#bOut").onclick = async () => { await logout(); renderLogin(); };
-    return;
-  }
+  } catch (e) { root().innerHTML = `<div class="wrap"><div class="notice bad">${esc(e.message)}</div></div>`; return; }
   renderShell();
 }
 
 /* =================== shell =================== */
 const PAGES = [
-  ["dashboard", "Dashboard Gross Profit", () => true],
-  ["pelanggan", "Data Pelanggan", () => true],
-  ["faktur", "Faktur Penjualan", () => true],
-  ["unggah", "Unggah Data", () => ["super_admin", "cabang"].includes(S.me.peran)],
-  ["kualitas", "Kualitas Data", () => true],
-  ["pengguna", "Pengguna", () => S.me.peran === "super_admin"],
+  ["dashboard", "Dashboard Gross Profit"],
+  ["pelanggan", "Data Pelanggan"],
+  ["faktur", "Faktur Penjualan"],
+  ["unggah", "Unggah Data"],
+  ["kualitas", "Kualitas Data"],
 ];
 function renderShell() {
-  const me = S.me;
-  if (!PAGES.some(p => p[0] === S.page && p[2]())) S.page = "dashboard";
+  if (!PAGES.some(p => p[0] === S.page)) S.page = "dashboard";
   root().innerHTML = `<div class="wrap">
     <header class="topbar">
       <div class="brand"><span class="eyebrow">MFlash · gabungan Accurate semua cabang</span><h1>Data Center</h1></div>
-      <div class="who">
-        <span class="chip-user"><b>${esc(me.nama || me.email)}</b> · ${esc(ROLE_LABEL[me.peran] || me.peran)}${me.peran === "cabang" ? " " + esc(me.cabang) : ""}${me.divisi ? " · " + esc(me.divisi) : ""}</span>
-        <button id="bExport" class="primary">Unduh Excel Data Center</button>
-        <button id="bPass">Ubah sandi</button>
-        <button id="bOut">Keluar</button>
-      </div>
+      <div class="who"><button id="bExport" class="primary">Unduh Excel Data Center</button></div>
     </header>
-    <nav class="nav" aria-label="Menu">${PAGES.filter(p => p[2]()).map(([k, l]) => `<button data-page="${k}"${k === S.page ? ' aria-current="page"' : ""}>${l}</button>`).join("")}</nav>
+    <nav class="nav" aria-label="Menu">${PAGES.map(([k, l]) => `<button data-page="${k}"${k === S.page ? ' aria-current="page"' : ""}>${l}</button>`).join("")}</nav>
     <main id="page"></main>
     <div id="modal"></div>
   </div>`;
   root().querySelectorAll("[data-page]").forEach(b => b.onclick = () => go(b.dataset.page));
-  $("#bOut").onclick = async () => { await logout(); S.me = null; renderLogin(); };
-  $("#bPass").onclick = openPassword;
   $("#bExport").onclick = exportDataCenter;
   go(S.page);
 }
@@ -195,27 +121,12 @@ function go(p) {
   root().querySelectorAll("[data-page]").forEach(b => b.dataset.page === p ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   // wadah baru tiap pindah menu: halaman lama yang masih memuat tidak bisa menimpa halaman baru
   const el = document.createElement("div"); el.innerHTML = `<p class="loading">Memuat…</p>`; $("#page").replaceChildren(el);
-  ({ dashboard: pageDashboard, pelanggan: pagePelanggan, faktur: pageFaktur, unggah: pageUnggah, kualitas: pageKualitas, pengguna: pagePengguna }[p])(el)
+  ({ dashboard: pageDashboard, pelanggan: pagePelanggan, faktur: pageFaktur, unggah: pageUnggah, kualitas: pageKualitas }[p])(el)
     .catch(e => { el.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; });
-}
-function openPassword() {
-  $("#modal").innerHTML = `<div class="modal"><form id="fPw"><h2 style="margin:0">Ubah kata sandi</h2>
-    <label>Kata sandi baru<input id="pw1" type="password" minlength="6" autocomplete="new-password" required></label>
-    <label>Ulangi kata sandi<input id="pw2" type="password" autocomplete="new-password" required></label>
-    <div class="err" id="pwErr" role="alert"></div>
-    <div class="toolbar"><button class="primary" type="submit">Simpan</button><button type="button" id="pwCancel">Batal</button></div></form></div>`;
-  $("#pwCancel").onclick = () => $("#modal").innerHTML = "";
-  $("#fPw").onsubmit = async e => {
-    e.preventDefault(); const a = $("#pw1").value, b = $("#pw2").value;
-    if (a.length < 6) return $("#pwErr").textContent = "Minimal 6 karakter.";
-    if (a !== b) return $("#pwErr").textContent = "Kedua kata sandi tidak sama.";
-    try { await authCall("/user", { password: a }, "PUT", await token()); $("#modal").innerHTML = ""; toast("Kata sandi diubah."); }
-    catch (err) { $("#pwErr").textContent = err.message; }
-  };
 }
 function toast(t) { const d = document.createElement("div"); d.className = "notice ok"; d.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:20;box-shadow:0 6px 18px rgba(0,0,0,.15)"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 3500); }
 const cabangOptions = (sel, all = true) => (all ? `<option value="">Semua cabang</option>` : "") + S.cabangs.map(c => `<option${c === sel ? " selected" : ""}>${esc(c)}</option>`).join("");
-const lockedCabang = () => S.me.peran === "cabang" ? S.me.cabang : null;
+const lockedCabang = () => null;
 const mPill = (m, has = true) => has ? `<span class="pill ${m >= 0.35 ? "ok" : m >= 0.15 ? "warn" : "bad"}">${pct(m)}</span>` : "–";
 
 /* =================== DASHBOARD =================== */
@@ -523,19 +434,22 @@ function mapFaktur(f) {
   return out;
 }
 let UP = [];
+const uploader = () => (LS.get("mfdc-uploader") || "").trim();
 async function pageUnggah(el) {
-  const { rows: hist } = await db.select("uploads", { select: "cabang,jenis,nama_file,jumlah_baris,periode_dari,periode_sampai,diunggah_email,diunggah_pada", order: "diunggah_pada.desc", limit: 30 });
+  const { rows: hist } = await db.select("uploads", { select: "cabang,jenis,nama_file,jumlah_baris,periode_dari,periode_sampai,diunggah_nama,diunggah_pada", order: "diunggah_pada.desc", limit: 30 });
   el.innerHTML = `<div style="display:grid;gap:14px">
   <section class="panel"><div><h2>Unggah file Accurate</h2>
-    <p class="sub">Unggah export <b>Daftar Pelanggan</b> dan <b>Rincian Faktur Penjualan</b>. ${lockedCabang() ? `Akun Anda hanya bisa mengunggah data cabang <b>${esc(lockedCabang())}</b>.` : "Bisa banyak file dari cabang mana saja sekaligus."} Pelanggan dengan ID yang sama diperbarui, faktur dengan nomor yang sama diganti versi terbaru, jadi aman mengunggah periode yang tumpang tindih.</p></div>
+    <p class="sub">Unggah export <b>Daftar Pelanggan</b> dan <b>Rincian Faktur Penjualan</b>. Bisa banyak file dari cabang mana saja sekaligus. Pelanggan dengan ID yang sama diperbarui, faktur dengan nomor yang sama diganti versi terbaru, jadi aman mengunggah periode yang tumpang tindih.</p></div>
+    <label style="display:grid;gap:4px;font-weight:600;font-size:13px;max-width:360px">Nama pengunggah<input id="upName" value="${esc(LS.get("mfdc-uploader") || "")}" placeholder="mis. Admin Bintara" autocomplete="name"></label>
     <label class="drop" id="drop" tabindex="0"><div><strong>Tarik file .xlsx ke sini, atau klik untuk memilih</strong><span class="sub">Cabang dikenali dari nama file (misal 003mflashbintar → Bintara)</span></div><span class="btn">Pilih file</span>
       <input type="file" id="fileInput" class="hidden-input" accept=".xlsx,.xls" multiple></label>
     <div id="upList"></div>
   </section>
   <section class="panel"><h2>Riwayat unggah</h2>
     <div class="tablebox"><table><thead><tr><th>Waktu</th><th>Cabang</th><th>Jenis</th><th>File</th><th class="num">Baris</th><th>Periode faktur</th><th>Oleh</th></tr></thead><tbody>
-    ${hist.map(h => `<tr><td>${fmtDateTime(h.diunggah_pada)}</td><td class="cab">${esc(h.cabang)}</td><td>${h.jenis === "faktur" ? "Faktur Penjualan" : "Data Pelanggan"}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:200px">${esc(h.nama_file)}</td><td class="num">${fmtN(h.jumlah_baris)}</td><td>${h.periode_dari ? fmtDate(h.periode_dari) + " – " + fmtDate(h.periode_sampai) : "–"}</td><td>${esc(h.diunggah_email || "")}</td></tr>`).join("") || `<tr><td colspan="7" class="sub">Belum ada data yang diunggah.</td></tr>`}</tbody></table></div>
+    ${hist.map(h => `<tr><td>${fmtDateTime(h.diunggah_pada)}</td><td class="cab">${esc(h.cabang)}</td><td>${h.jenis === "faktur" ? "Faktur Penjualan" : "Data Pelanggan"}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:200px">${esc(h.nama_file)}</td><td class="num">${fmtN(h.jumlah_baris)}</td><td>${h.periode_dari ? fmtDate(h.periode_dari) + " – " + fmtDate(h.periode_sampai) : "–"}</td><td>${esc(h.diunggah_nama || "")}</td></tr>`).join("") || `<tr><td colspan="7" class="sub">Belum ada data yang diunggah.</td></tr>`}</tbody></table></div>
   </section></div>`;
+  $("#upName").oninput = e => { LS.set("mfdc-uploader", e.target.value.trim() || null); renderUpList(); };
   const inp = $("#fileInput"), drop = $("#drop");
   const add = async list => {
     for (const file of [...list]) { try { const f = await parseFile(file); UP = UP.filter(x => x.name !== f.name); UP.push(f); } catch (e) { UP.push({ id: Math.random().toString(36).slice(2), name: file.name, rows: [], kind: "", branch: "", status: "gagal", err: "Gagal dibaca: " + e.message }); } }
@@ -569,7 +483,7 @@ function renderUpList() {
       <td class="num">${fmtN(f.rows.length)}</td>
       <td style="white-space:normal;min-width:220px">${f.status === "selesai" ? `<span class="pill ok">Terunggah</span> ${esc(f.msg || "")}` : f.status === "mengunggah" ? `<div class="bar"><span style="width:${pr}%"></span></div><span class="sub">${pr}%</span>` : f.status === "error" ? `<span class="pill bad">Gagal</span> ${esc(f.err)}` : p ? `<span class="pill bad">Perlu dicek</span> ${esc(p)}` : `<span class="pill warn">Siap diunggah</span>`}</td>
       <td>${f.status === "mengunggah" ? "" : `<button data-rm="${f.id}">Hapus</button>`}</td></tr>`; }).join("")}</tbody></table></div>
-    <div class="toolbar"><button class="primary" id="bUpload"${busy || !ready.length ? " disabled" : ""}>Unggah ${ready.length} file ke server</button>${UP.some(f => f.status === "selesai") && !busy ? `<button id="bClearDone">Bersihkan daftar</button>` : ""}</div>`;
+    <div class="toolbar"><button class="primary" id="bUpload"${busy || !ready.length || !uploader() ? " disabled" : ""}>Unggah ${ready.length} file ke server</button>${!uploader() && ready.length ? `<span class="sub">Isi nama pengunggah dulu.</span>` : ""}${UP.some(f => f.status === "selesai") && !busy ? `<button id="bClearDone">Bersihkan daftar</button>` : ""}</div>`;
   box.querySelectorAll("select").forEach(s => s.onchange = () => { const f = UP.find(x => x.id === s.dataset.id); f[s.dataset.k] = s.value; renderUpList(); });
   box.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { UP = UP.filter(x => x.id !== b.dataset.rm); renderUpList(); });
   const bu = $("#bUpload"); if (bu) bu.onclick = uploadAll;
@@ -584,7 +498,7 @@ async function uploadAll() {
     try {
       if (f.kind === "pelanggan") {
         const recs = mapPelanggan(f); f.total = recs.length;
-        const [u] = await db.insert("uploads", [{ cabang: f.branch, jenis: "pelanggan", nama_file: f.name, jumlah_baris: recs.length, kolom: f.headers, diunggah_email: S.me.email }], { returning: true });
+        const [u] = await db.insert("uploads", [{ cabang: f.branch, jenis: "pelanggan", nama_file: f.name, jumlah_baris: recs.length, kolom: f.headers, diunggah_nama: uploader() }], { returning: true });
         for (let i = 0; i < recs.length; i += 500) {
           await db.insert("pelanggan", recs.slice(i, i + 500).map(r => ({ ...r, upload_id: u.id, diperbarui: new Date().toISOString() })), { upsert: true, onConflict: "cabang,id_pelanggan" });
           f.done = Math.min(recs.length, i + 500); renderUpList();
@@ -593,7 +507,7 @@ async function uploadAll() {
       } else {
         const recs = mapFaktur(f); f.total = recs.length;
         const dates = recs.map(r => r.tgl_faktur).filter(Boolean).sort();
-        const [u] = await db.insert("uploads", [{ cabang: f.branch, jenis: "faktur", nama_file: f.name, jumlah_baris: recs.length, kolom: f.headers, periode_dari: dates[0] || null, periode_sampai: dates[dates.length - 1] || null, diunggah_email: S.me.email }], { returning: true });
+        const [u] = await db.insert("uploads", [{ cabang: f.branch, jenis: "faktur", nama_file: f.name, jumlah_baris: recs.length, kolom: f.headers, periode_dari: dates[0] || null, periode_sampai: dates[dates.length - 1] || null, diunggah_nama: uploader() }], { returning: true });
         // kirim per kelompok faktur utuh (satu faktur tidak terpotong)
         const byNo = new Map(); for (const r of recs) { if (!byNo.has(r.no_faktur)) byNo.set(r.no_faktur, []); byNo.get(r.no_faktur).push(r); }
         let chunk = [];
@@ -636,35 +550,7 @@ async function pageKualitas(el) {
   <section class="issues">${issues.map(([l, t, d]) => `<div class="issue ${l === "bad" ? "bad" : l === "ok" ? "ok" : ""}"><h3><span class="pill ${l === "bad" ? "bad" : l === "ok" ? "ok" : "warn"}">${l === "bad" ? "Perlu dibenahi" : l === "ok" ? "Baik" : "Perhatikan"}</span> ${esc(t)}</h3><p>${esc(d)}</p></div>`).join("")}</section></div>`;
 }
 
-/* =================== PENGGUNA =================== */
-async function pagePengguna(el) {
-  const { rows } = await db.select("profiles", { select: "id,email,nama,peran,cabang,divisi,dibuat", order: "dibuat.asc" });
-  el.innerHTML = `<div style="display:grid;gap:14px">
-  <section class="panel"><h2>Pengguna & hak akses</h2>
-  <div class="notice"><b>Menambah pengguna baru:</b> buka Supabase → Authentication → Users → <i>Add user</i> → <i>Create new user</i>, isi email dan kata sandi, centang <i>Auto Confirm User</i>. Akun baru muncul di tabel ini sebagai "Belum aktif"; tentukan perannya lalu klik Simpan.</div>
-  <div class="tablebox"><table><thead><tr><th>Email</th><th>Nama</th><th>Peran</th><th>Cabang</th><th>Divisi</th><th></th></tr></thead><tbody>
-  ${rows.map(u => `<tr data-u="${u.id}"><td>${esc(u.email)}</td><td><input data-f="nama" value="${esc(u.nama || "")}" aria-label="Nama" style="width:170px"></td>
-    <td><select data-f="peran" aria-label="Peran">${Object.entries(ROLE_LABEL).map(([k, l]) => `<option value="${k}"${k === u.peran ? " selected" : ""}>${l}</option>`).join("")}</select></td>
-    <td><select data-f="cabang" aria-label="Cabang"><option value="">—</option>${S.cabangs.map(c => `<option${c === u.cabang ? " selected" : ""}>${esc(c)}</option>`).join("")}</select></td>
-    <td><input data-f="divisi" value="${esc(u.divisi || "")}" placeholder="mis. Marketing" aria-label="Divisi" style="width:150px"></td>
-    <td><button data-save="${u.id}">Simpan</button> <span class="sub" data-msg="${u.id}"></span></td></tr>`).join("")}</tbody></table></div>
-  <p class="sub"><b>Super Admin</b>: unggah & lihat semua cabang, kelola pengguna. <b>Divisi</b>: lihat dashboard dan data semua cabang. <b>Cabang</b>: unggah dan lihat data cabangnya sendiri. <b>Belum aktif</b>: tidak bisa melihat apa pun.</p></section></div>`;
-  el.querySelectorAll("[data-save]").forEach(b => b.onclick = async () => {
-    const tr = b.closest("tr"); const g = f => tr.querySelector(`[data-f="${f}"]`).value.trim();
-    const body = { nama: g("nama") || null, peran: g("peran"), cabang: g("cabang") || null, divisi: g("divisi") || null };
-    const msg = el.querySelector(`[data-msg="${b.dataset.save}"]`);
-    if (body.peran === "cabang" && !body.cabang) { msg.textContent = "Pilih cabangnya."; return; }
-    if (body.peran !== "cabang") body.cabang = null;
-    if (b.dataset.save === S.me.id && body.peran !== "super_admin") { msg.textContent = "Tidak bisa menurunkan peran akun sendiri."; return; }
-    b.disabled = true;
-    try { await db.update("profiles", [["id", "eq", b.dataset.save]], body); msg.textContent = "Tersimpan"; }
-    catch (e) { msg.textContent = e.message; }
-    b.disabled = false;
-  });
-}
-
 /* =================== start =================== */
-window.addEventListener("storage", e => { if (e.key === SKEY && !e.newValue && S.me) { S.me = null; renderLogin(); } });
 if (!window.XLSX) root().innerHTML = `<div class="wrap"><div class="notice bad">Pustaka Excel gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.</div></div>`;
 boot();
 })();

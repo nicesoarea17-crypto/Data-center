@@ -3,7 +3,8 @@
 Aplikasi web untuk menggabungkan data Accurate seluruh cabang MFlash (Daftar Pelanggan dan Rincian Faktur Penjualan), menampilkan **Dashboard Gross Profit** per pilar dan per cabang, serta mengunduh data gabungan ke Excel.
 
 - **Hosting:** Cloudflare Pages (dari GitHub), sama seperti dashboard sewa
-- **Database dan login:** Supabase (project baru, terpisah dari dashboard sewa)
+- **Database:** Supabase (project baru, terpisah dari dashboard sewa)
+- **Tanpa login:** siapa pun yang punya alamat aplikasi bisa membuka dashboard, melihat data, dan mengunggah
 - **Tanpa build:** cukup file `index.html`, `app.js`, dan `config.js`
 
 ## Isi paket
@@ -11,20 +12,18 @@ Aplikasi web untuk menggabungkan data Accurate seluruh cabang MFlash (Daftar Pel
 | File | Fungsi |
 |---|---|
 | `index.html` | Tampilan aplikasi |
-| `app.js` | Logika aplikasi: login, unggah, dashboard, data, pengguna |
+| `app.js` | Logika aplikasi: unggah, dashboard, data, kualitas data |
 | `config.js` | Alamat dan kunci Supabase (**wajib diisi**) |
 | `supabase/schema.sql` | Struktur database, aturan akses, dan fungsi dashboard |
 
-## Peran pengguna
+## Keamanan tanpa login
 
-| Peran | Unggah data | Lihat dashboard dan data | Kelola pengguna |
-|---|---|---|---|
-| Super Admin | Semua cabang | Semua cabang | Ya |
-| Divisi | Tidak | Semua cabang | Tidak |
-| Cabang | Hanya cabangnya | Hanya cabangnya | Tidak |
-| Belum aktif | Tidak | Tidak | Tidak |
+Aplikasi ini sengaja dibuat **tanpa login**. Akibatnya:
+- Siapa pun yang mengetahui alamat aplikasi bisa melihat seluruh data, termasuk nama dan nomor WA pelanggan, serta bisa mengunggah data untuk cabang mana pun. Bagikan alamatnya hanya ke tim internal.
+- Data **tidak bisa dihapus atau diubah langsung** dari aplikasi maupun lewat API. Faktur hanya bisa diganti dengan mengunggah ulang faktur bernomor sama. Kunci ini dipasang di database.
+- Setiap unggahan mencatat **nama pengunggah** (diisi sendiri) di Riwayat unggah.
 
-Aturan ini dijaga di database (Row Level Security), bukan hanya di tampilan. Akun cabang tidak bisa menulis atau membaca data cabang lain walaupun mencoba langsung lewat API.
+**Opsional, bila nanti ingin dibatasi tanpa mengubah aplikasi:** pasang **Cloudflare Access** di depan alamat aplikasi (Cloudflare → Zero Trust → Access → Applications). Pengunjung cukup memasukkan email kantor lalu menerima kode, tanpa akun atau kata sandi di aplikasi. Layanan ini gratis untuk tim kecil.
 
 ---
 
@@ -38,21 +37,9 @@ Aturan ini dijaga di database (Row Level Security), bukan hanya di tampilan. Aku
 ### 2. Pasang struktur database
 1. Buka menu **SQL Editor**, lalu klik **New query**.
 2. Buka file `supabase/schema.sql`, salin seluruh isinya, tempel ke editor, lalu klik **Run**.
-3. Pastikan hasilnya *Success*. File ini aman dijalankan ulang kalau nanti ada pembaruan.
+3. Pastikan hasilnya *Success*. File ini aman dijalankan ulang kalau nanti ada pembaruan, termasuk bila versi berlogin sebelumnya sudah sempat dipasang (data tidak hilang).
 
-### 3. Matikan pendaftaran bebas
-Buka **Authentication → Sign In / Providers**, lalu matikan **Allow new users to sign up**. Dengan begitu hanya Super Admin yang bisa membuat akun.
-
-### 4. Buat akun Super Admin (akun Anda)
-1. Buka **Authentication → Users → Add user → Create new user**.
-2. Isi email dan kata sandi Anda, lalu centang **Auto Confirm User** dan klik **Create user**.
-3. Kembali ke **SQL Editor**, lalu jalankan perintah ini (ganti emailnya):
-   ```sql
-   update public.profiles set peran = 'super_admin', nama = 'Toni Nugroho'
-    where email = 'email-anda@contoh.com';
-   ```
-
-### 5. Isi `config.js`
+### 3. Isi `config.js`
 1. Di Supabase, buka **Project Settings → API** (atau **Data API**).
 2. Salin **Project URL** dan **anon public key**.
 3. Buka `config.js`, lalu ganti kedua isian:
@@ -62,13 +49,13 @@ Buka **Authentication → Sign In / Providers**, lalu matikan **Allow new users 
      SUPABASE_ANON_KEY: "eyJhbGciOi..."
    };
    ```
-   *Anon key* memang aman diletakkan di sini, karena data tetap dilindungi aturan akses di database. Jangan pernah memasukkan **service_role key** ke file ini.
+   Aplikasi memakai *anon key* ini untuk membaca dan mengunggah data; hak hapus dan ubah langsung tetap dikunci di database. Jangan pernah memasukkan **service_role key** ke file ini.
 
-### 6. Unggah ke GitHub
+### 4. Unggah ke GitHub
 1. Buat repository baru di GitHub, misalnya `MFlash-Data-Center` (sebaiknya **Private**).
 2. Klik **Add file → Upload files**, lalu tarik semua isi folder ini (`index.html`, `app.js`, `config.js`, `README.md`, dan folder `supabase`). Klik **Commit changes**.
 
-### 7. Hubungkan ke Cloudflare Pages
+### 5. Hubungkan ke Cloudflare Pages
 1. Masuk ke Cloudflare, lalu buka **Workers & Pages → Create → Pages → Connect to Git**.
 2. Pilih repository `MFlash-Data-Center`.
 3. Atur build sebagai berikut:
@@ -79,17 +66,12 @@ Buka **Authentication → Sign In / Providers**, lalu matikan **Allow new users 
 
 Setiap kali file di GitHub diubah, Cloudflare akan memperbarui aplikasinya secara otomatis.
 
-### 8. Masuk dan unggah data pertama
-1. Buka alamat aplikasi dan masuk dengan akun Super Admin.
-2. Buka menu **Unggah Data**, tarik file export Accurate (Daftar Pelanggan dan Rincian Faktur Penjualan) dari semua cabang, lalu klik **Unggah ke server**.
+### 6. Unggah data pertama
+1. Buka alamat aplikasi.
+2. Buka menu **Unggah Data**, isi **Nama pengunggah**, tarik file export Accurate (Daftar Pelanggan dan Rincian Faktur Penjualan) dari semua cabang, lalu klik **Unggah ke server**.
 3. Buka **Dashboard Gross Profit**. Angkanya langsung tampil.
 
 ---
-
-## Menambah pengguna (cabang dan divisi)
-1. Buka Supabase → **Authentication → Users → Add user → Create new user**. Isi email dan kata sandi, lalu centang **Auto Confirm User**.
-2. Di aplikasi, buka menu **Pengguna**. Akun baru muncul dengan peran "Belum aktif". Pilih perannya (**Cabang** beserta cabangnya, atau **Divisi** beserta nama divisinya), lalu klik **Simpan**.
-3. Berikan email, kata sandi, dan alamat aplikasi kepada penggunanya. Mereka bisa mengganti kata sandi sendiri lewat tombol **Ubah sandi**.
 
 ## Cara kerja data
 - **Kolom CABANG** selalu menjadi kolom pertama. Cabang dikenali dari nama file Accurate (misal `003mflashbintar` → Bintara) dan bisa diubah sebelum diunggah.
@@ -103,4 +85,4 @@ Setiap kali file di GitHub diubah, Cloudflare akan memperbarui aplikasinya secar
 - **Nomor WA:** di data contoh, kolom "NOMOR TELP 1" Sawangan Depok berisi pekerjaan, dan di Bintara sejak pertengahan 2024 berisi sumber info (REKLAME, dll.). Menu **Kualitas Data** menandai cabang seperti ini. Perbaiki template laporan Daftar Pelanggan di Accurate agar memuat kolom No. Handphone/WhatsApp yang benar.
 - **Kapasitas Supabase gratis (500 MB):** Data Pelanggan memakai sekitar 0,5 KB per pelanggan, dan faktur sekitar 1,5–2 KB per baris. Untuk 18 cabang, ruang gratis kemungkinan cukup untuk beberapa bulan data faktur. Pantau di **Project Settings → Usage**. Jika mendekati batas, naikkan ke paket berbayar (cek harga terbaru di supabase.com/pricing).
 - **Supabase gratis** akan menjeda project yang tidak dipakai selama 7 hari. Selama aplikasi dipakai rutin, hal ini tidak terjadi.
-- **Pelanggan yang dihapus di Accurate** tidak otomatis terhapus di Data Center. Super Admin bisa menghapusnya lewat Supabase → Table Editor.
+- **Menghapus data** (misalnya pelanggan yang sudah dihapus di Accurate, atau salah unggah cabang) hanya bisa dilakukan oleh pemilik project Supabase lewat Supabase → Table Editor.
