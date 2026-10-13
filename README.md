@@ -73,6 +73,11 @@ Setiap kali file di GitHub diubah, Cloudflare akan memperbarui aplikasinya secar
 
 ---
 
+## Isi menu
+- **Dashboard Gross Profit:** filter cabang, bulan, dan pilar. Berisi GP per pilar, tren harian, laporan per cabang, GP per kategori, barang penyumbang GP terbesar, dan penjualan rugi.
+- **Tab Sewa:** GP pilar SEWA ditambah **jumlah unit (total QTY)** per cabang, per hari, dan per pelanggan.
+- **Tab Service & Maintenance:** GP pilar Service/Maintenance ditambah **jumlah transaksi corporate termaintenance** (faktur ke pelanggan berkategori Corporate) dan jumlah perusahaan corporate-nya.
+
 ## Cara kerja data
 - **Kolom CABANG** selalu menjadi kolom pertama. Cabang dikenali dari nama file Accurate (misal `003mflashbintar` → Bintara) dan bisa diubah sebelum diunggah.
 - **Pelanggan** dicocokkan dengan **Cabang + ID Pelanggan**, karena ID yang sama bisa dipakai cabang lain untuk orang berbeda. Unggah ulang akan memperbarui data pelanggan yang sudah ada.
