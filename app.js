@@ -151,6 +151,8 @@ function renderConnect(err) {
 /* =================== shell =================== */
 const PAGES = [
   ["dashboard", "Dashboard Gross Profit"],
+  ["sewa", "Sewa"],
+  ["service", "Service & Maintenance"],
   ["pelanggan", "Data Pelanggan"],
   ["faktur", "Faktur Penjualan"],
   ["unggah", "Unggah Data"],
@@ -176,7 +178,7 @@ function go(p) {
   root().querySelectorAll("[data-page]").forEach(b => b.dataset.page === p ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   // wadah baru tiap pindah menu: halaman lama yang masih memuat tidak bisa menimpa halaman baru
   const el = document.createElement("div"); el.innerHTML = `<p class="loading">Memuat…</p>`; $("#page").replaceChildren(el);
-  ({ dashboard: pageDashboard, pelanggan: pagePelanggan, faktur: pageFaktur, unggah: pageUnggah, kualitas: pageKualitas }[p])(el)
+  ({ dashboard: pageDashboard, sewa: pageSewa, service: pageService, pelanggan: pagePelanggan, faktur: pageFaktur, unggah: pageUnggah, kualitas: pageKualitas }[p])(el)
     .catch(e => { el.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; });
 }
 function toast(t) { const d = document.createElement("div"); d.className = "notice ok"; d.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:20;box-shadow:0 6px 18px rgba(0,0,0,.15)"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 3500); }
@@ -184,43 +186,68 @@ const cabangOptions = (sel, all = true) => (all ? `<option value="">Semua cabang
 const lockedCabang = () => null;
 const mPill = (m, has = true) => has ? `<span class="pill ${m >= 0.35 ? "ok" : m >= 0.15 ? "warn" : "bad"}">${pct(m)}</span>` : "–";
 
-/* =================== DASHBOARD =================== */
-const D = { preset: LS.get("mfdc-preset") || "bulan_ini", from: "", to: "", cab: "" };
-function presetRange(p) {
-  const n = new Date(); const y = n.getFullYear(), m = n.getMonth();
-  if (p === "bulan_ini") return [ymd(new Date(y, m, 1)), ymd(new Date(y, m + 1, 0))];
-  if (p === "bulan_lalu") return [ymd(new Date(y, m - 1, 1)), ymd(new Date(y, m, 0))];
-  if (p === "30_hari") return [ymd(new Date(y, m, n.getDate() - 29)), ymd(n)];
-  if (p === "tahun_ini") return [ymd(new Date(y, 0, 1)), ymd(new Date(y, 11, 31))];
-  if (p === "semua") return ["", ""];
-  return [D.from, D.to];
+/* =================== FILTER BERSAMA (cabang, bulan) =================== */
+// Dipakai Dashboard GP dan tab pilar. bulan: "YYYY-MM" | "semua" | "pilih" (rentang tanggal sendiri)
+const D = { bulan: LS.get("mfdc-bulan") || "", from: "", to: "", cab: "", pilar: "" };
+let BULAN = null;
+const BLN = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const namaBulan = b => { const [y, m] = b.split("-"); return `${BLN[+m - 1]} ${y}`; };
+async function loadBulan() {
+  if (!BULAN) BULAN = (await db.rpc("bulan_tersedia")).map(r => r.bulan);
+  if (!D.bulan || (D.bulan !== "semua" && D.bulan !== "pilih" && !BULAN.includes(D.bulan))) D.bulan = BULAN[0] || "semua";
 }
-const PRESETS = [["bulan_ini", "Bulan ini"], ["bulan_lalu", "Bulan lalu"], ["30_hari", "30 hari terakhir"], ["tahun_ini", "Tahun ini"], ["semua", "Semua data"], ["pilih", "Pilih tanggal…"]];
+function periode() {
+  if (D.bulan === "semua") return ["", ""];
+  if (D.bulan === "pilih") return [D.from, D.to];
+  const [y, m] = D.bulan.split("-").map(Number); return [ymd(new Date(y, m - 1, 1)), ymd(new Date(y, m, 0))];
+}
+function periodeLabel() {
+  if (D.bulan === "semua") return "semua periode";
+  if (D.bulan === "pilih") return `${D.from ? fmtDate(D.from) : "awal"} – ${D.to ? fmtDate(D.to) : "sekarang"}`;
+  return namaBulan(D.bulan);
+}
+function filterBar(withPilar, pilars) {
+  return `<div class="toolbar">
+    <select id="fCab" aria-label="Cabang">${cabangOptions(D.cab)}</select>
+    <select id="fBln" aria-label="Bulan">${(BULAN || []).map(b => `<option value="${b}"${b === D.bulan ? " selected" : ""}>${namaBulan(b)}</option>`).join("")}<option value="semua"${D.bulan === "semua" ? " selected" : ""}>Semua periode</option><option value="pilih"${D.bulan === "pilih" ? " selected" : ""}>Pilih tanggal…</option></select>
+    ${withPilar ? `<select id="fPil" aria-label="Pilar"><option value="">Semua pilar</option>${pilars.map(p => `<option${p === D.pilar ? " selected" : ""}>${esc(p)}</option>`).join("")}</select>` : ""}
+    <span class="toolbar"${D.bulan === "pilih" ? "" : " hidden"} id="fCustom"><input type="date" id="fFrom" value="${D.from}" aria-label="Dari tanggal"><input type="date" id="fTo" value="${D.to}" aria-label="Sampai tanggal"></span>
+    <span class="sub">Periode: <b>${esc(periodeLabel())}</b></span>
+  </div>`;
+}
+function bindFilter(el, re) {
+  $("#fCab", el).onchange = e => { D.cab = e.target.value; re(); };
+  $("#fBln", el).onchange = e => { D.bulan = e.target.value; LS.set("mfdc-bulan", D.bulan); if (D.bulan === "pilih") { $("#fCustom", el).hidden = false; return; } re(); };
+  const p = $("#fPil", el); if (p) p.onchange = e => { D.pilar = e.target.value; re(); };
+  $("#fFrom", el).onchange = e => { D.from = e.target.value; re(); };
+  $("#fTo", el).onchange = e => { D.to = e.target.value; re(); };
+}
+const sumRows = rows => rows.reduce((o, r) => (o.rev += +r.omzet, o.cost += +(r.hpp || 0), o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.n += +(r.jumlah_baris || 0), o), { rev: 0, cost: 0, gp: 0, inv: 0, n: 0 });
+const withM = o => (o.m = o.rev ? o.gp / o.rev : 0, o);
+const sortPilar = arr => arr.sort((a, b) => (PILAR_ORDER.indexOf(a) + 1 || 99) - (PILAR_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
+
+/* =================== DASHBOARD GP =================== */
 async function pageDashboard(el) {
-  if (lockedCabang()) D.cab = lockedCabang();
-  const [from, to] = presetRange(D.preset); if (D.preset !== "pilih") { D.from = from; D.to = to; }
-  const args = { p_dari: D.from || null, p_sampai: D.to || null };
-  const cArgs = { ...args, p_cabang: D.cab || null };
-  const [mat, days, kat, top, rugi] = await Promise.all([
+  await loadBulan();
+  const [dari, sampai] = periode();
+  const args = { p_dari: dari || null, p_sampai: sampai || null };
+  const pil = D.pilar ? [D.pilar] : null;
+  const cArgs = { ...args, p_cabang: D.cab || null, p_pilar: pil };
+  const [matAll, days, kat, top, rugi] = await Promise.all([
     db.rpc("gp_cabang_pilar", args), db.rpc("gp_harian", cArgs), db.rpc("gp_kategori", cArgs),
     db.rpc("gp_top_barang", { ...cArgs, p_limit: 10 }), db.rpc("gp_rugi", { ...cArgs, p_limit: 300 })]);
-  const pilars = [...new Set(mat.map(r => r.pilar))]; pilars.sort((a, b) => (PILAR_ORDER.indexOf(a) + 1 || 99) - (PILAR_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
-  const sum = rows => rows.reduce((o, r) => (o.rev += +r.omzet, o.cost += +r.hpp, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.n += +r.jumlah_baris, o), { rev: 0, cost: 0, gp: 0, inv: 0, n: 0 });
-  const sel = D.cab ? mat.filter(r => r.cabang === D.cab) : mat;
-  const T = sum(sel), TA = sum(mat); T.m = T.rev ? T.gp / T.rev : 0; TA.m = TA.rev ? TA.gp / TA.rev : 0;
-  const pAgg = pilars.map(p => { const a = sum(sel.filter(r => r.pilar === p)); a.m = a.rev ? a.gp / a.rev : 0; return [p, a]; });
+  const allPilars = sortPilar([...new Set(matAll.map(r => r.pilar).concat(D.pilar ? [D.pilar] : []))]);
+  const mat = D.pilar ? matAll.filter(r => r.pilar === D.pilar) : matAll;   // filter pilar
+  const pilars = D.pilar ? [D.pilar] : allPilars;
+  const sel = D.cab ? mat.filter(r => r.cabang === D.cab) : mat;            // filter cabang
+  const T = withM(sumRows(sel)), TA = withM(sumRows(mat));
+  const pAgg = pilars.map(p => [p, withM(sumRows(sel.filter(r => r.pilar === p)))]);
   const maxP = Math.max(0, ...pAgg.map(x => x[1].gp));
-  const cabs = [...new Set(mat.map(r => r.cabang))].map(c => { const rs = mat.filter(r => r.cabang === c); const t = sum(rs); t.m = t.rev ? t.gp / t.rev : 0; return { c, t, p: pilars.map(p => sum(rs.filter(r => r.pilar === p)).gp) }; }).sort((a, b) => b.t.gp - a.t.gp);
-  const label = D.cab || "Semua cabang";
-  const per = D.from || D.to ? `${D.from ? fmtDate(D.from) : "awal"} – ${D.to ? fmtDate(D.to) : "sekarang"}` : "semua periode";
+  const cabs = [...new Set(mat.map(r => r.cabang))].map(c => { const rs = mat.filter(r => r.cabang === c); return { c, t: withM(sumRows(rs)), p: pilars.map(p => sumRows(rs.filter(r => r.pilar === p)).gp) }; }).sort((a, b) => b.t.gp - a.t.gp);
+  const label = [D.cab || "Semua cabang", D.pilar].filter(Boolean).join(" · ");
   el.innerHTML = `<div style="display:grid;gap:14px">
-  <div class="toolbar">
-    <select id="dCab" aria-label="Cabang"${lockedCabang() ? " disabled" : ""}>${cabangOptions(D.cab)}</select>
-    <select id="dPre" aria-label="Periode">${PRESETS.map(([k, l]) => `<option value="${k}"${k === D.preset ? " selected" : ""}>${l}</option>`).join("")}</select>
-    <span id="dCustom"${D.preset === "pilih" ? "" : " hidden"} class="toolbar"><input type="date" id="dFrom" value="${D.from}" aria-label="Dari tanggal"><input type="date" id="dTo" value="${D.to}" aria-label="Sampai tanggal"></span>
-    <span class="sub">Periode: <b>${esc(per)}</b></span>
-  </div>
-  ${!mat.length ? `<div class="notice warn">Belum ada faktur pada periode ini. ${D.preset !== "semua" ? `<button class="linkbtn" id="dAll">Lihat semua data</button>` : `Unggah file Rincian Faktur Penjualan di menu Unggah Data.`}</div>` : ""}
+  ${filterBar(true, allPilars)}
+  ${!matAll.length ? `<div class="notice warn">Belum ada faktur pada periode ini.${D.bulan !== "semua" ? ` <button class="linkbtn" id="dAll">Lihat semua periode</button>` : " Unggah file Rincian Faktur Penjualan di menu Unggah Data."}</div>` : ""}
   <div class="gp-hero">
     <div class="gp-main"><span class="l">Gross profit · ${esc(label)}</span><span class="v">${rp(T.gp)}</span><span class="s">Margin ${mPill(T.m, T.rev)} dari omzet ${rp(T.rev)}</span></div>
     <div class="kpi"><span class="l">Omzet</span><span class="v">${rpShort(T.rev)}</span><span class="s">${fmtN(T.inv)} faktur</span></div>
@@ -228,59 +255,127 @@ async function pageDashboard(el) {
     <div class="kpi"><span class="l">GP per faktur</span><span class="v">${rpShort(T.inv ? T.gp / T.inv : 0)}</span><span class="s">rata-rata</span></div>
   </div>
   <div class="gp-grid">
-    <div class="card"><h3>Gross profit per pilar</h3><p class="sub">${esc(label)}</p>
+    <div class="card"><h3>Gross profit per pilar</h3><p class="sub">${esc(label)} · ${esc(periodeLabel())}</p>
       <div class="hbars">${pAgg.map(([p, a]) => `<div class="hbar"><div class="hbar-l">${esc(p)}</div><div class="hbar-t" role="img" aria-label="${esc(p)} ${rp(a.gp)}"><span style="width:${maxP > 0 ? Math.max(0, a.gp) / maxP * 100 : 0}%"></span></div><div class="hbar-v">${rp(a.gp)}<small>${T.gp ? Math.round(a.gp / T.gp * 100) : 0}% dari total</small></div></div>`).join("") || `<p class="sub">Tidak ada data.</p>`}</div>
       <div class="tablebox"><table><thead><tr><th>Pilar</th><th class="num">Omzet</th><th class="num">HPP</th><th class="num">Gross profit</th><th class="num">Margin</th><th class="num">Faktur</th></tr></thead><tbody>
       ${pAgg.map(([p, a]) => `<tr><td class="cab">${esc(p)}</td><td class="num">${rp(a.rev)}</td><td class="num">${rp(a.cost)}</td><td class="num"><b>${rp(a.gp)}</b></td><td class="num">${mPill(a.m, a.rev)}</td><td class="num">${fmtN(a.inv)}</td></tr>`).join("")}
       <tr class="tot"><td>TOTAL</td><td class="num">${rp(T.rev)}</td><td class="num">${rp(T.cost)}</td><td class="num">${rp(T.gp)}</td><td class="num">${mPill(T.m, T.rev)}</td><td class="num">${fmtN(T.inv)}</td></tr></tbody></table></div>
     </div>
-    <div class="card"><h3>Tren gross profit harian</h3><p class="sub">${esc(label)} · arahkan kursor ke batang untuk detail</p>${trendSVG(days)}</div>
+    <div class="card"><h3>Tren gross profit harian</h3><p class="sub">${esc(label)} · arahkan kursor ke batang untuk detail</p>${trendSVG(days, "gross_profit")}</div>
   </div>
-  ${lockedCabang() ? "" : `<div class="card"><h3>Laporan per cabang</h3><p class="sub">Gross profit tiap cabang per pilar, ${esc(per)}. Klik nama cabang untuk membuka laporannya.</p>
-    <div class="tablebox"><table><thead><tr><th>Cabang</th>${pilars.map(p => `<th class="num">${esc(p)}</th>`).join("")}<th class="num">Total GP</th><th class="num">Omzet</th><th class="num">Margin</th><th class="num">Faktur</th><th class="num">Porsi GP</th></tr></thead><tbody>
-    ${cabs.map(m => `<tr${m.c === D.cab ? ' class="sel"' : ""}><td class="cab"><button class="linkbtn" data-cab="${esc(m.c)}">${esc(m.c)}</button></td>${m.p.map(g => `<td class="num">${g ? rp(g) : "–"}</td>`).join("")}<td class="num"><b>${rp(m.t.gp)}</b></td><td class="num">${rp(m.t.rev)}</td><td class="num">${mPill(m.t.m, m.t.rev)}</td><td class="num">${fmtN(m.t.inv)}</td><td class="num">${TA.gp ? Math.round(m.t.gp / TA.gp * 100) : 0}%</td></tr>`).join("")}
-    <tr class="tot"><td>SEMUA CABANG</td>${pilars.map(p => `<td class="num">${rp(sum(mat.filter(r => r.pilar === p)).gp)}</td>`).join("")}<td class="num">${rp(TA.gp)}</td><td class="num">${rp(TA.rev)}</td><td class="num">${mPill(TA.m, TA.rev)}</td><td class="num">${fmtN(TA.inv)}</td><td class="num">100%</td></tr></tbody></table></div></div>`}
+  <div class="card"><h3>Laporan per cabang</h3><p class="sub">Gross profit tiap cabang per pilar${D.pilar ? " (pilar " + esc(D.pilar) + ")" : ""}, ${esc(periodeLabel())}. Klik nama cabang untuk membuka laporannya.</p>
+    <div class="tablebox"><table><thead><tr><th>Cabang</th>${pilars.map(p => `<th class="num">${esc(p)}</th>`).join("")}${pilars.length > 1 ? `<th class="num">Total GP</th>` : ""}<th class="num">Omzet</th><th class="num">Margin</th><th class="num">Faktur</th><th class="num">Porsi GP</th></tr></thead><tbody>
+    ${cabs.map(m => `<tr${m.c === D.cab ? ' class="sel"' : ""}><td class="cab"><button class="linkbtn" data-cab="${esc(m.c)}">${esc(m.c)}</button></td>${m.p.map(g => `<td class="num">${g ? rp(g) : "–"}</td>`).join("")}${pilars.length > 1 ? `<td class="num"><b>${rp(m.t.gp)}</b></td>` : ""}<td class="num">${rp(m.t.rev)}</td><td class="num">${mPill(m.t.m, m.t.rev)}</td><td class="num">${fmtN(m.t.inv)}</td><td class="num">${TA.gp ? Math.round(m.t.gp / TA.gp * 100) : 0}%</td></tr>`).join("") || `<tr><td colspan="9" class="sub">Tidak ada data.</td></tr>`}
+    ${cabs.length ? `<tr class="tot"><td>SEMUA CABANG</td>${pilars.map(p => `<td class="num">${rp(sumRows(mat.filter(r => r.pilar === p)).gp)}</td>`).join("")}${pilars.length > 1 ? `<td class="num">${rp(TA.gp)}</td>` : ""}<td class="num">${rp(TA.rev)}</td><td class="num">${mPill(TA.m, TA.rev)}</td><td class="num">${fmtN(TA.inv)}</td><td class="num">100%</td></tr>` : ""}</tbody></table></div></div>
   <div class="gp-grid">
-    <div class="card"><h3>GP per kategori penjualan</h3><p class="sub">${esc(label)}</p><div class="tablebox"><table><thead><tr><th>Pilar</th><th>Kategori penjualan</th><th class="num">Omzet</th><th class="num">Gross profit</th><th class="num">Margin</th></tr></thead><tbody>
-      ${kat.map(k => `<tr><td>${esc(k.pilar)}</td><td>${esc(k.kategori_penjualan)}</td><td class="num">${rp(k.omzet)}</td><td class="num"><b>${rp(k.gross_profit)}</b></td><td class="num">${mPill(+k.omzet ? k.gross_profit / k.omzet : 0, +k.omzet)}</td></tr>`).join("")}</tbody></table></div></div>
+    ${katCard(kat, label)}
     <div class="card"><h3>10 barang/jasa penyumbang GP terbesar</h3><p class="sub">${esc(label)}</p><div class="tablebox"><table><thead><tr><th>Barang / jasa</th><th class="num">Qty</th><th class="num">Omzet</th><th class="num">Gross profit</th></tr></thead><tbody>
-      ${top.map(b => `<tr><td style="white-space:normal;min-width:220px">${esc(b.nama_barang)}</td><td class="num">${fmtN(b.qty)}</td><td class="num">${rp(b.omzet)}</td><td class="num"><b>${rp(b.gross_profit)}</b></td></tr>`).join("")}</tbody></table></div></div>
+      ${top.map(b => `<tr><td style="white-space:normal;min-width:220px">${esc(b.nama_barang)}</td><td class="num">${fmtN(b.qty)}</td><td class="num">${rp(b.omzet)}</td><td class="num"><b>${rp(b.gross_profit)}</b></td></tr>`).join("") || `<tr><td colspan="4" class="sub">Tidak ada data.</td></tr>`}</tbody></table></div></div>
   </div>
-  <div class="card"><h3>Dijual di bawah harga beli <span class="pill ${rugi.length ? "bad" : "ok"}">${fmtN(rugi.length)} baris</span></h3>
-    <p class="sub">${rugi.length ? `Total kerugian ${rp(-rugi.reduce((s, r) => s + +r.gross_profit, 0))}. Cek apakah harga jual salah input atau HPP di Accurate terlalu tinggi.` : "Tidak ada penjualan rugi pada filter ini."}</p>
-    ${rugi.length ? `<div class="tablebox" style="max-height:340px"><table><thead><tr><th>Cabang</th><th>Tanggal</th><th>No faktur</th><th>Barang</th><th class="num">Qty</th><th class="num">Harga beli</th><th class="num">Total jual</th><th class="num">GP</th></tr></thead><tbody>
-    ${rugi.map(r => `<tr><td class="cab">${esc(r.cabang)}</td><td>${fmtDate(r.tgl_faktur)}</td><td class="mono">${esc(r.no_faktur)}</td><td style="white-space:normal;min-width:200px">${esc(r.nama_barang)}</td><td class="num">${fmtN(r.qty)}</td><td class="num">${rp(r.harga_beli)}</td><td class="num">${rp(r.total_harga)}</td><td class="num" style="color:var(--bad)"><b>${rp(r.gross_profit)}</b></td></tr>`).join("")}</tbody></table></div>` : ""}
-  </div>
+  ${rugiCard(rugi)}
   <p class="sub">Cara hitung: <b>Gross profit = TOTAL HARGA − HARGA BELI</b> per baris faktur (HARGA BELI dari Accurate sudah untuk seluruh qty). Baris jasa dan sewa tercatat HARGA BELI 0, jadi GP-nya sama dengan omzet; biaya teknisi dan biaya sewa ke vendor belum termasuk.</p>
   </div>`;
   const re = () => pageDashboard(el);
-  $("#dCab").onchange = e => { D.cab = e.target.value; re(); };
-  $("#dPre").onchange = e => { D.preset = e.target.value; LS.set("mfdc-preset", D.preset); if (D.preset === "pilih") { $("#dCustom").hidden = false; return; } re(); };
-  $("#dFrom").onchange = e => { D.from = e.target.value; re(); };
-  $("#dTo").onchange = e => { D.to = e.target.value; re(); };
-  const all = $("#dAll"); if (all) all.onclick = () => { D.preset = "semua"; re(); };
+  bindFilter(el, re);
+  const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
   el.querySelectorAll("[data-cab]").forEach(b => b.onclick = () => { D.cab = D.cab === b.dataset.cab ? "" : b.dataset.cab; re(); window.scrollTo({ top: 0, behavior: "smooth" }); });
-  const tip = el.querySelector(".tip");
-  el.querySelectorAll(".trend [data-i]").forEach(g => {
-    const d = days[+g.dataset.i];
-    g.onmouseenter = g.onfocus = () => { tip.innerHTML = `<b>${fmtDate(d.tgl)}</b><br>GP ${rp(d.gross_profit)}<br>Omzet ${rp(d.omzet)} · ${fmtN(d.jumlah_faktur)} faktur`; tip.hidden = false; const b = g.getBoundingClientRect(), w = tip.parentElement.getBoundingClientRect(); tip.style.left = Math.min(w.width - 180, Math.max(0, b.left - w.left + b.width / 2 - 90)) + "px"; tip.style.top = (b.top - w.top - 72) + "px"; };
-    g.onmouseleave = g.onblur = () => { tip.hidden = true; };
-  });
+  bindTrend(el, days, d => `GP ${rp(d.gross_profit)}<br>Omzet ${rp(d.omzet)} · ${fmtN(d.jumlah_faktur)} faktur`);
 }
+function katCard(kat, label, extraCol) {
+  return `<div class="card"><h3>GP per kategori penjualan</h3><p class="sub">${esc(label)}</p><div class="tablebox"><table><thead><tr><th>Pilar</th><th>Kategori penjualan</th>${extraCol ? `<th class="num">${extraCol[1]}</th>` : ""}<th class="num">Omzet</th><th class="num">Gross profit</th><th class="num">Margin</th></tr></thead><tbody>
+    ${kat.map(k => `<tr><td>${esc(k.pilar)}</td><td>${esc(k.kategori_penjualan)}</td>${extraCol ? `<td class="num">${fmtN(k[extraCol[0]])}</td>` : ""}<td class="num">${rp(k.omzet)}</td><td class="num"><b>${rp(k.gross_profit)}</b></td><td class="num">${mPill(+k.omzet ? k.gross_profit / k.omzet : 0, +k.omzet)}</td></tr>`).join("") || `<tr><td colspan="6" class="sub">Tidak ada data.</td></tr>`}</tbody></table></div></div>`;
+}
+function rugiCard(rugi) {
+  return `<div class="card"><h3>Dijual di bawah harga beli <span class="pill ${rugi.length ? "bad" : "ok"}">${fmtN(rugi.length)} baris</span></h3>
+    <p class="sub">${rugi.length ? `Total kerugian ${rp(-rugi.reduce((s, r) => s + +r.gross_profit, 0))}. Cek apakah harga jual salah input atau HPP di Accurate terlalu tinggi.` : "Tidak ada penjualan rugi pada filter ini."}</p>
+    ${rugi.length ? `<div class="tablebox" style="max-height:340px"><table><thead><tr><th>Cabang</th><th>Tanggal</th><th>No faktur</th><th>Barang</th><th class="num">Qty</th><th class="num">Harga beli</th><th class="num">Total jual</th><th class="num">GP</th></tr></thead><tbody>
+    ${rugi.map(r => `<tr><td class="cab">${esc(r.cabang)}</td><td>${fmtDate(r.tgl_faktur)}</td><td class="mono">${esc(r.no_faktur)}</td><td style="white-space:normal;min-width:200px">${esc(r.nama_barang)}</td><td class="num">${fmtN(r.qty)}</td><td class="num">${rp(r.harga_beli)}</td><td class="num">${rp(r.total_harga)}</td><td class="num" style="color:var(--bad)"><b>${rp(r.gross_profit)}</b></td></tr>`).join("")}</tbody></table></div>` : ""}</div>`;
+}
+
+/* =================== TAB PILAR: SEWA & SERVICE & MAINTENANCE =================== */
+const PILAR_TABS = {
+  sewa: { title: "Sewa", match: p => p === "SEWA", extra: "unit",
+    note: "Jumlah unit = total QTY pada baris faktur pilar SEWA." },
+  service: { title: "Service & Maintenance", match: p => /SERVICE|MAINTENANCE/.test(p), extra: "corporate",
+    note: "Corporate termaintenance = jumlah faktur (transaksi) pilar Service & Maintenance. Satu faktur = satu transaksi." }
+};
+const pageSewa = el => pagePilar(el, "sewa");
+const pageService = el => pagePilar(el, "service");
+async function pagePilar(el, key) {
+  const C = PILAR_TABS[key];
+  await loadBulan();
+  const [dari, sampai] = periode();
+  const args = { p_dari: dari || null, p_sampai: sampai || null };
+  const known = await db.rpc("gp_cabang_pilar", { p_dari: null, p_sampai: null });
+  const pil = [...new Set(known.map(r => r.pilar))].filter(C.match);
+  const pArr = pil.length ? pil : (key === "sewa" ? ["SEWA"] : ["SERVICE"]);
+  const cArgs = { ...args, p_cabang: D.cab || null, p_pilar: pArr };
+  const corp = C.extra === "corporate";
+  const [cab, days, kat, cust] = await Promise.all([
+    db.rpc("pilar_cabang", { ...args, p_pilar: pArr }), db.rpc("gp_harian", cArgs), db.rpc("gp_kategori", cArgs),
+    db.rpc("pilar_pelanggan", { ...cArgs, p_corporate: false, p_urut: corp ? "transaksi" : "unit", p_limit: 100 })]);
+  const rows = D.cab ? cab.filter(r => r.cabang === D.cab) : cab;
+  const s = rows.reduce((o, r) => (o.rev += +r.omzet, o.cost += +r.hpp, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.tc += +r.transaksi_corporate, o.pc += +r.pelanggan_corporate, o.pel += +r.pelanggan, o), { rev: 0, cost: 0, gp: 0, inv: 0, unit: 0, tc: 0, pc: 0, pel: 0 });
+  s.m = s.rev ? s.gp / s.rev : 0;
+  const label = (D.cab || "Semua cabang") + " · " + periodeLabel();
+  const sorted = [...rows].sort((a, b) => corp ? (b.jumlah_faktur - a.jumlah_faktur || b.gross_profit - a.gross_profit) : (b.unit - a.unit || b.gross_profit - a.gross_profit));
+  el.innerHTML = `<div style="display:grid;gap:14px">
+  ${filterBar(false)}
+  <p class="sub">Pilar: <b>${esc(pArr.join(", "))}</b>. ${esc(C.note)}</p>
+  ${!cab.length ? `<div class="notice warn">Belum ada faktur ${esc(C.title)} pada periode ini.${D.bulan !== "semua" ? ` <button class="linkbtn" id="dAll">Lihat semua periode</button>` : ""}</div>` : ""}
+  <div class="gp-hero">
+    <div class="gp-main"><span class="l">Gross profit ${esc(C.title)} · ${esc(D.cab || "Semua cabang")}</span><span class="v">${rp(s.gp)}</span><span class="s">Margin ${mPill(s.m, s.rev)} dari omzet ${rp(s.rev)}</span></div>
+    ${corp ? `<div class="kpi"><span class="l">Corporate termaintenance</span><span class="v">${fmtN(s.inv)} <small style="font-size:13px;font-weight:600">transaksi</small></span><span class="s">dari ${fmtN(s.pel)} pelanggan</span></div>`
+           : `<div class="kpi"><span class="l">Unit disewakan (QTY)</span><span class="v">${fmtN(s.unit)} <small style="font-size:13px;font-weight:600">unit</small></span><span class="s">${fmtN(s.pel)} pelanggan sewa</span></div>`}
+    ${corp ? `<div class="kpi"><span class="l">Omzet</span><span class="v">${rpShort(s.rev)}</span><span class="s">HPP ${rpShort(s.cost)}</span></div>` : `<div class="kpi"><span class="l">Jumlah transaksi</span><span class="v">${fmtN(s.inv)}</span><span class="s">faktur ${esc(C.title)}</span></div>`}
+    <div class="kpi"><span class="l">${corp ? "GP per transaksi" : "GP per unit"}</span><span class="v">${rpShort(corp ? (s.inv ? s.gp / s.inv : 0) : (s.unit ? s.gp / s.unit : 0))}</span><span class="s">rata-rata</span></div>
+  </div>
+  <div class="gp-grid">
+    <div class="card"><h3>${corp ? "Corporate termaintenance per hari" : "Unit disewakan per hari"}</h3><p class="sub">${esc(label)} · jumlah ${corp ? "transaksi" : "unit"}</p>${trendSVG(days, corp ? "jumlah_faktur" : "unit", true)}</div>
+    <div class="card"><h3>Gross profit ${esc(C.title)} per hari</h3><p class="sub">${esc(label)}</p>${trendSVG(days, "gross_profit")}</div>
+  </div>
+  <div class="card"><h3>Laporan ${esc(C.title)} per cabang</h3><p class="sub">${esc(periodeLabel())}. Klik nama cabang untuk membuka laporannya.</p>
+    <div class="tablebox"><table><thead><tr><th>Cabang</th>${corp ? `<th class="num">Corporate termaintenance (transaksi)</th><th class="num">Pelanggan</th>` : `<th class="num">Unit (QTY)</th><th class="num">Pelanggan sewa</th><th class="num">Transaksi</th>`}<th class="num">Omzet</th><th class="num">HPP</th><th class="num">Gross profit</th><th class="num">Margin</th></tr></thead><tbody>
+    ${sorted.map(r => `<tr${r.cabang === D.cab ? ' class="sel"' : ""}><td class="cab"><button class="linkbtn" data-cab="${esc(r.cabang)}">${esc(r.cabang)}</button></td>${corp ? `<td class="num"><b>${fmtN(r.jumlah_faktur)}</b></td><td class="num">${fmtN(r.pelanggan)}</td>` : `<td class="num"><b>${fmtN(r.unit)}</b></td><td class="num">${fmtN(r.pelanggan)}</td><td class="num">${fmtN(r.jumlah_faktur)}</td>`}<td class="num">${rp(r.omzet)}</td><td class="num">${rp(r.hpp)}</td><td class="num"><b>${rp(r.gross_profit)}</b></td><td class="num">${mPill(+r.omzet ? r.gross_profit / r.omzet : 0, +r.omzet)}</td></tr>`).join("") || `<tr><td colspan="9" class="sub">Tidak ada data.</td></tr>`}
+    ${sorted.length > 1 || D.cab ? (() => { const a = cab.reduce((o, r) => (o.rev += +r.omzet, o.cost += +r.hpp, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.tc += +r.transaksi_corporate, o.pc += +r.pelanggan_corporate, o.pel += +r.pelanggan, o), { rev: 0, cost: 0, gp: 0, inv: 0, unit: 0, tc: 0, pc: 0, pel: 0 }); return `<tr class="tot"><td>SEMUA CABANG</td>${corp ? `<td class="num">${fmtN(a.inv)}</td><td class="num">${fmtN(a.pel)}</td>` : `<td class="num">${fmtN(a.unit)}</td><td class="num">${fmtN(a.pel)}</td><td class="num">${fmtN(a.inv)}</td>`}<td class="num">${rp(a.rev)}</td><td class="num">${rp(a.cost)}</td><td class="num">${rp(a.gp)}</td><td class="num">${mPill(a.rev ? a.gp / a.rev : 0, a.rev)}</td></tr>`; })() : ""}
+    </tbody></table></div></div>
+  <div class="card"><h3>${corp ? "Pelanggan Service & Maintenance" : "Pelanggan sewa"}</h3><p class="sub">${esc(label)} · diurutkan menurut ${corp ? "jumlah transaksi" : "jumlah unit"}</p>
+    <div class="tablebox" style="max-height:420px"><table><thead><tr><th>Cabang</th><th>Pelanggan</th><th>ID</th><th>Kategori</th><th>No WA</th>${corp ? "" : `<th class="num">Unit</th>`}<th class="num">Transaksi</th><th class="num">Omzet</th><th class="num">Gross profit</th><th>Transaksi terakhir</th></tr></thead><tbody>
+    ${cust.map(c => `<tr><td class="cab">${esc(c.cabang)}</td><td style="white-space:normal;min-width:180px">${esc(c.nama)}</td><td class="mono">${esc(c.id_pelanggan)}</td><td>${esc(c.kategori_pelanggan)}</td><td class="mono">${esc(c.no_wa)}</td>${corp ? "" : `<td class="num"><b>${fmtN(c.unit)}</b></td>`}<td class="num">${corp ? `<b>${fmtN(c.jumlah_faktur)}</b>` : fmtN(c.jumlah_faktur)}</td><td class="num">${rp(c.omzet)}</td><td class="num">${rp(c.gross_profit)}</td><td>${fmtDate(c.faktur_terakhir)}</td></tr>`).join("") || `<tr><td colspan="10" class="sub">Tidak ada data.</td></tr>`}</tbody></table></div></div>
+  ${katCard(kat, label, corp ? null : ["unit", "Unit"])}
+  </div>`;
+  const re = () => pagePilar(el, key);
+  bindFilter(el, re);
+  const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
+  el.querySelectorAll("[data-cab]").forEach(b => b.onclick = () => { D.cab = D.cab === b.dataset.cab ? "" : b.dataset.cab; re(); window.scrollTo({ top: 0, behavior: "smooth" }); });
+  bindTrend(el, days, d => corp ? `${fmtN(d.jumlah_faktur)} transaksi<br>GP ${rp(d.gross_profit)} · Omzet ${rp(d.omzet)}` : `${fmtN(d.unit)} unit · ${fmtN(d.jumlah_faktur)} transaksi<br>GP ${rp(d.gross_profit)} · Omzet ${rp(d.omzet)}`);
+}
+
+/* =================== grafik batang harian =================== */
 function niceStep(x) { const p = Math.pow(10, Math.floor(Math.log10(x))); const f = x / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; }
-function short(n) { const a = Math.abs(n); return (n < 0 ? "-" : "") + (a >= 1e9 ? (a / 1e9).toLocaleString("id-ID", { maximumFractionDigits: 1 }) + " M" : a >= 1e6 ? (a / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 }) + " jt" : a >= 1e3 ? Math.round(a / 1e3) + " rb" : a); }
-function trendSVG(days) {
+function short(n) { const a = Math.abs(n); return (n < 0 ? "-" : "") + (a >= 1e9 ? (a / 1e9).toLocaleString("id-ID", { maximumFractionDigits: 1 }) + " M" : a >= 1e6 ? (a / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 }) + " jt" : a >= 1e3 ? Math.round(a / 1e3) + " rb" : a.toLocaleString("id-ID", { maximumFractionDigits: 1 })); }
+function trendSVG(days, key, count) {
   if (!days.length) return `<p class="sub">Tidak ada faktur bertanggal pada filter ini.</p>`;
-  const W = 640, H = 230, L = 64, R = 8, T = 12, B = 30; const vals = days.map(d => +d.gross_profit);
-  const max = Math.max(0, ...vals), min = Math.min(0, ...vals); const step = niceStep((max - min) / 4 || 1);
-  const top = Math.ceil(max / step) * step, bot = Math.floor(min / step) * step; const y = v => T + (top - v) / ((top - bot) || 1) * (H - T - B);
+  const W = 640, H = 230, L = 64, R = 8, T = 12, B = 30; const vals = days.map(d => +d[key] || 0);
+  const max = Math.max(0, ...vals), min = Math.min(0, ...vals); let step = niceStep((max - min) / 4 || 1); if (count) step = Math.max(1, Math.ceil(step));
+  const top = Math.ceil(max / step) * step || step, bot = Math.floor(min / step) * step; const y = v => T + (top - v) / ((top - bot) || 1) * (H - T - B);
   const bw = (W - L - R) / days.length; const ticks = []; for (let t = bot; t <= top + 1e-6; t += step) ticks.push(t);
   const lab = Math.ceil(days.length / 10);
-  return `<div class="trend"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Gross profit harian">
-    ${ticks.map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" class="grid${t === 0 ? " zero" : ""}"/><text x="${L - 6}" y="${y(t) + 4}" text-anchor="end" class="ax">${short(t)}</text>`).join("")}
-    ${days.map((d, i) => { const v = +d.gross_profit, x = L + i * bw + bw * 0.15, w = Math.max(2, bw * 0.7), y0 = y(0), y1 = y(v);
-      return `<g data-i="${i}" tabindex="0"><rect x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent"/><rect x="${x}" y="${Math.min(y0, y1)}" width="${w}" height="${Math.max(1, Math.abs(y1 - y0))}" rx="${Math.min(4, w / 2)}" class="${v < 0 ? "bneg" : "b"}"/>${i % lab === 0 ? `<text x="${x + w / 2}" y="${H - 10}" text-anchor="middle" class="ax">${String(d.tgl).slice(8, 10)}/${String(d.tgl).slice(5, 7)}</text>` : ""}</g>`; }).join("")}
+  return `<div class="trend"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Grafik harian">
+    ${ticks.map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" class="grid${t === 0 ? " zero" : ""}"/><text x="${L - 6}" y="${y(t) + 4}" text-anchor="end" class="ax">${count ? fmtN(t) : short(t)}</text>`).join("")}
+    ${days.map((d, i) => { const v = +d[key] || 0, x = L + i * bw + bw * 0.15, w = Math.max(2, bw * 0.7), y0 = y(0), y1 = y(v);
+      return `<g data-i="${i}" tabindex="0"><rect x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent"/>${v ? `<rect x="${x}" y="${Math.min(y0, y1)}" width="${w}" height="${Math.max(1, Math.abs(y1 - y0))}" rx="${Math.min(4, w / 2)}" class="${v < 0 ? "bneg" : "b"}"/>` : ""}${i % lab === 0 ? `<text x="${x + w / 2}" y="${H - 10}" text-anchor="middle" class="ax">${String(d.tgl).slice(8, 10)}/${String(d.tgl).slice(5, 7)}</text>` : ""}</g>`; }).join("")}
   </svg><div class="tip" hidden></div></div>`;
+}
+function bindTrend(el, days, html) {
+  el.querySelectorAll(".trend").forEach(box => {
+    const tip = box.querySelector(".tip");
+    box.querySelectorAll("[data-i]").forEach(g => {
+      const d = days[+g.dataset.i];
+      g.onmouseenter = g.onfocus = () => { tip.innerHTML = `<b>${fmtDate(d.tgl)}</b><br>${html(d)}`; tip.hidden = false; const b = g.getBoundingClientRect(), w = box.getBoundingClientRect(); tip.style.left = Math.min(w.width - 180, Math.max(0, b.left - w.left + b.width / 2 - 90)) + "px"; tip.style.top = (b.top - w.top - 80) + "px"; };
+      g.onmouseleave = g.onblur = () => { tip.hidden = true; };
+    });
+  });
 }
 
 /* =================== DATA TABLES =================== */
@@ -575,7 +670,7 @@ async function uploadAll() {
     } catch (e) { f.status = "error"; f.err = e.message; }
     renderUpList();
   }
-  if (UP.some(f => f.status === "selesai")) { toast("Unggah selesai. Dashboard sudah memakai data baru."); if (S.page === "unggah") go("unggah"); }
+  if (UP.some(f => f.status === "selesai")) { BULAN = null; toast("Unggah selesai. Dashboard sudah memakai data baru."); if (S.page === "unggah") go("unggah"); }
 }
 
 /* =================== KUALITAS DATA =================== */
