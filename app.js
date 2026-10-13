@@ -152,7 +152,7 @@ function renderConnect(err) {
 const PAGES = [
   ["dashboard", "Dashboard Gross Profit"],
   ["sewa", "Sewa"],
-  ["service", "Service & Maintenance"],
+  ["service", "Service & Maintenance Corporate"],
   ["pelanggan", "Data Pelanggan"],
   ["faktur", "Faktur Penjualan"],
   ["unggah", "Unggah Data"],
@@ -296,8 +296,8 @@ function rugiCard(rugi) {
 const PILAR_TABS = {
   sewa: { title: "Sewa", match: p => p === "SEWA", extra: "unit",
     note: "Jumlah unit = total QTY pada baris faktur pilar SEWA." },
-  service: { title: "Service & Maintenance", match: p => /SERVICE|MAINTENANCE/.test(p), extra: "corporate",
-    note: "Corporate termaintenance dihitung dari faktur pilar Service/Maintenance yang Kategori Pelanggan-nya Corporate (di faktur atau di Data Pelanggan). Satu faktur = satu transaksi." }
+  service: { title: "Service & Maintenance Corporate", match: p => /MAINTENANCE/.test(p), extra: "corporate",
+    note: "Hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). Corporate termaintenance = jumlah faktur (transaksi). Satu faktur = satu transaksi." }
 };
 const pageSewa = el => pagePilar(el, "sewa");
 const pageService = el => pagePilar(el, "service");
@@ -308,47 +308,48 @@ async function pagePilar(el, key) {
   const args = { p_dari: dari || null, p_sampai: sampai || null };
   const known = await db.rpc("gp_cabang_pilar", { p_dari: null, p_sampai: null });
   const pil = [...new Set(known.map(r => r.pilar))].filter(C.match);
-  const pArr = pil.length ? pil : (key === "sewa" ? ["SEWA"] : ["SERVICE"]);
+  const pArr = pil.length ? pil : (key === "sewa" ? ["SEWA"] : ["SERVICE & MAINTENANCE CORPORATE"]);
+  const adaPilar = [...new Set(known.map(r => r.pilar))];
   const cArgs = { ...args, p_cabang: D.cab || null, p_pilar: pArr };
   const corp = C.extra === "corporate";
   const [cab, days, kat, cust] = await Promise.all([
     db.rpc("pilar_cabang", { ...args, p_pilar: pArr }), db.rpc("gp_harian", cArgs), db.rpc("gp_kategori", cArgs),
-    db.rpc("pilar_pelanggan", { ...cArgs, p_corporate: corp, p_urut: corp ? "transaksi" : "unit", p_limit: 100 })]);
+    db.rpc("pilar_pelanggan", { ...cArgs, p_corporate: false, p_urut: corp ? "transaksi" : "unit", p_limit: 100 })]);
   const rows = D.cab ? cab.filter(r => r.cabang === D.cab) : cab;
   const s = rows.reduce((o, r) => (o.rev += +r.omzet, o.cost += +r.hpp, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.tc += +r.transaksi_corporate, o.pc += +r.pelanggan_corporate, o.pel += +r.pelanggan, o), { rev: 0, cost: 0, gp: 0, inv: 0, unit: 0, tc: 0, pc: 0, pel: 0 });
   s.m = s.rev ? s.gp / s.rev : 0;
   const label = (D.cab || "Semua cabang") + " · " + periodeLabel();
-  const sorted = [...rows].sort((a, b) => corp ? (b.transaksi_corporate - a.transaksi_corporate || b.gross_profit - a.gross_profit) : (b.unit - a.unit || b.gross_profit - a.gross_profit));
+  const sorted = [...rows].sort((a, b) => corp ? (b.jumlah_faktur - a.jumlah_faktur || b.gross_profit - a.gross_profit) : (b.unit - a.unit || b.gross_profit - a.gross_profit));
   el.innerHTML = `<div style="display:grid;gap:14px">
   ${filterBar(false)}
   <p class="sub">Pilar: <b>${esc(pArr.join(", "))}</b>. ${esc(C.note)}</p>
-  ${!cab.length ? `<div class="notice warn">Belum ada faktur ${esc(C.title)} pada periode ini.${D.bulan !== "semua" ? ` <button class="linkbtn" id="dAll">Lihat semua periode</button>` : ""}</div>` : ""}
+  ${!pil.length ? `<div class="notice warn">Belum ada faktur dengan pilar ${key === "sewa" ? "SEWA" : "yang mengandung kata MAINTENANCE"} di data yang diunggah. Pilar yang ada: ${esc(adaPilar.join(", ") || "-")}.</div>` : !cab.length ? `<div class="notice warn">Belum ada faktur ${esc(C.title)} pada periode ini.${D.bulan !== "semua" ? ` <button class="linkbtn" id="dAll">Lihat semua periode</button>` : ""}</div>` : ""}
   <div class="gp-hero">
     <div class="gp-main"><span class="l">Gross profit ${esc(C.title)} · ${esc(D.cab || "Semua cabang")}</span><span class="v">${rp(s.gp)}</span><span class="s">Margin ${mPill(s.m, s.rev)} dari omzet ${rp(s.rev)}</span></div>
-    ${corp ? `<div class="kpi"><span class="l">Corporate termaintenance</span><span class="v">${fmtN(s.tc)} <small style="font-size:13px;font-weight:600">transaksi</small></span><span class="s">dari ${fmtN(s.pc)} perusahaan corporate</span></div>`
+    ${corp ? `<div class="kpi"><span class="l">Corporate termaintenance</span><span class="v">${fmtN(s.inv)} <small style="font-size:13px;font-weight:600">transaksi</small></span><span class="s">dari ${fmtN(s.pel)} pelanggan</span></div>`
            : `<div class="kpi"><span class="l">Unit disewakan (QTY)</span><span class="v">${fmtN(s.unit)} <small style="font-size:13px;font-weight:600">unit</small></span><span class="s">${fmtN(s.pel)} pelanggan sewa</span></div>`}
-    <div class="kpi"><span class="l">Jumlah transaksi</span><span class="v">${fmtN(s.inv)}</span><span class="s">faktur ${esc(C.title)}${corp ? ` · ${fmtN(s.pel)} pelanggan` : ""}</span></div>
+    ${corp ? `<div class="kpi"><span class="l">Omzet</span><span class="v">${rpShort(s.rev)}</span><span class="s">HPP ${rpShort(s.cost)}</span></div>` : `<div class="kpi"><span class="l">Jumlah transaksi</span><span class="v">${fmtN(s.inv)}</span><span class="s">faktur ${esc(C.title)}</span></div>`}
     <div class="kpi"><span class="l">${corp ? "GP per transaksi" : "GP per unit"}</span><span class="v">${rpShort(corp ? (s.inv ? s.gp / s.inv : 0) : (s.unit ? s.gp / s.unit : 0))}</span><span class="s">rata-rata</span></div>
   </div>
   <div class="gp-grid">
-    <div class="card"><h3>${corp ? "Transaksi corporate per hari" : "Unit disewakan per hari"}</h3><p class="sub">${esc(label)}</p>${trendSVG(days, corp ? "transaksi_corporate" : "unit", true)}</div>
+    <div class="card"><h3>${corp ? "Corporate termaintenance per hari" : "Unit disewakan per hari"}</h3><p class="sub">${esc(label)} · jumlah ${corp ? "transaksi" : "unit"}</p>${trendSVG(days, corp ? "jumlah_faktur" : "unit", true)}</div>
     <div class="card"><h3>Gross profit ${esc(C.title)} per hari</h3><p class="sub">${esc(label)}</p>${trendSVG(days, "gross_profit")}</div>
   </div>
   <div class="card"><h3>Laporan ${esc(C.title)} per cabang</h3><p class="sub">${esc(periodeLabel())}. Klik nama cabang untuk membuka laporannya.</p>
-    <div class="tablebox"><table><thead><tr><th>Cabang</th>${corp ? `<th class="num">Transaksi corporate</th><th class="num">Perusahaan corporate</th>` : `<th class="num">Unit (QTY)</th><th class="num">Pelanggan sewa</th>`}<th class="num">Transaksi</th><th class="num">Omzet</th><th class="num">HPP</th><th class="num">Gross profit</th><th class="num">Margin</th></tr></thead><tbody>
-    ${sorted.map(r => `<tr${r.cabang === D.cab ? ' class="sel"' : ""}><td class="cab"><button class="linkbtn" data-cab="${esc(r.cabang)}">${esc(r.cabang)}</button></td>${corp ? `<td class="num"><b>${fmtN(r.transaksi_corporate)}</b></td><td class="num">${fmtN(r.pelanggan_corporate)}</td>` : `<td class="num"><b>${fmtN(r.unit)}</b></td><td class="num">${fmtN(r.pelanggan)}</td>`}<td class="num">${fmtN(r.jumlah_faktur)}</td><td class="num">${rp(r.omzet)}</td><td class="num">${rp(r.hpp)}</td><td class="num"><b>${rp(r.gross_profit)}</b></td><td class="num">${mPill(+r.omzet ? r.gross_profit / r.omzet : 0, +r.omzet)}</td></tr>`).join("") || `<tr><td colspan="9" class="sub">Tidak ada data.</td></tr>`}
-    ${sorted.length > 1 || D.cab ? (() => { const a = cab.reduce((o, r) => (o.rev += +r.omzet, o.cost += +r.hpp, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.tc += +r.transaksi_corporate, o.pc += +r.pelanggan_corporate, o.pel += +r.pelanggan, o), { rev: 0, cost: 0, gp: 0, inv: 0, unit: 0, tc: 0, pc: 0, pel: 0 }); return `<tr class="tot"><td>SEMUA CABANG</td>${corp ? `<td class="num">${fmtN(a.tc)}</td><td class="num">${fmtN(a.pc)}</td>` : `<td class="num">${fmtN(a.unit)}</td><td class="num">${fmtN(a.pel)}</td>`}<td class="num">${fmtN(a.inv)}</td><td class="num">${rp(a.rev)}</td><td class="num">${rp(a.cost)}</td><td class="num">${rp(a.gp)}</td><td class="num">${mPill(a.rev ? a.gp / a.rev : 0, a.rev)}</td></tr>`; })() : ""}
+    <div class="tablebox"><table><thead><tr><th>Cabang</th>${corp ? `<th class="num">Corporate termaintenance (transaksi)</th><th class="num">Pelanggan</th>` : `<th class="num">Unit (QTY)</th><th class="num">Pelanggan sewa</th><th class="num">Transaksi</th>`}<th class="num">Omzet</th><th class="num">HPP</th><th class="num">Gross profit</th><th class="num">Margin</th></tr></thead><tbody>
+    ${sorted.map(r => `<tr${r.cabang === D.cab ? ' class="sel"' : ""}><td class="cab"><button class="linkbtn" data-cab="${esc(r.cabang)}">${esc(r.cabang)}</button></td>${corp ? `<td class="num"><b>${fmtN(r.jumlah_faktur)}</b></td><td class="num">${fmtN(r.pelanggan)}</td>` : `<td class="num"><b>${fmtN(r.unit)}</b></td><td class="num">${fmtN(r.pelanggan)}</td><td class="num">${fmtN(r.jumlah_faktur)}</td>`}<td class="num">${rp(r.omzet)}</td><td class="num">${rp(r.hpp)}</td><td class="num"><b>${rp(r.gross_profit)}</b></td><td class="num">${mPill(+r.omzet ? r.gross_profit / r.omzet : 0, +r.omzet)}</td></tr>`).join("") || `<tr><td colspan="9" class="sub">Tidak ada data.</td></tr>`}
+    ${sorted.length > 1 || D.cab ? (() => { const a = cab.reduce((o, r) => (o.rev += +r.omzet, o.cost += +r.hpp, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.tc += +r.transaksi_corporate, o.pc += +r.pelanggan_corporate, o.pel += +r.pelanggan, o), { rev: 0, cost: 0, gp: 0, inv: 0, unit: 0, tc: 0, pc: 0, pel: 0 }); return `<tr class="tot"><td>SEMUA CABANG</td>${corp ? `<td class="num">${fmtN(a.inv)}</td><td class="num">${fmtN(a.pel)}</td>` : `<td class="num">${fmtN(a.unit)}</td><td class="num">${fmtN(a.pel)}</td><td class="num">${fmtN(a.inv)}</td>`}<td class="num">${rp(a.rev)}</td><td class="num">${rp(a.cost)}</td><td class="num">${rp(a.gp)}</td><td class="num">${mPill(a.rev ? a.gp / a.rev : 0, a.rev)}</td></tr>`; })() : ""}
     </tbody></table></div></div>
-  <div class="card"><h3>${corp ? "Pelanggan corporate yang di-maintenance" : "Pelanggan sewa"}</h3><p class="sub">${esc(label)} · diurutkan menurut ${corp ? "jumlah transaksi" : "jumlah unit"}</p>
+  <div class="card"><h3>${corp ? "Pelanggan Service & Maintenance Corporate" : "Pelanggan sewa"}</h3><p class="sub">${esc(label)} · diurutkan menurut ${corp ? "jumlah transaksi" : "jumlah unit"}</p>
     <div class="tablebox" style="max-height:420px"><table><thead><tr><th>Cabang</th><th>Pelanggan</th><th>ID</th><th>Kategori</th><th>No WA</th>${corp ? "" : `<th class="num">Unit</th>`}<th class="num">Transaksi</th><th class="num">Omzet</th><th class="num">Gross profit</th><th>Transaksi terakhir</th></tr></thead><tbody>
-    ${cust.map(c => `<tr><td class="cab">${esc(c.cabang)}</td><td style="white-space:normal;min-width:180px">${esc(c.nama)}</td><td class="mono">${esc(c.id_pelanggan)}</td><td>${esc(c.kategori_pelanggan)}</td><td class="mono">${esc(c.no_wa)}</td>${corp ? "" : `<td class="num"><b>${fmtN(c.unit)}</b></td>`}<td class="num">${corp ? `<b>${fmtN(c.jumlah_faktur)}</b>` : fmtN(c.jumlah_faktur)}</td><td class="num">${rp(c.omzet)}</td><td class="num">${rp(c.gross_profit)}</td><td>${fmtDate(c.faktur_terakhir)}</td></tr>`).join("") || `<tr><td colspan="10" class="sub">${corp ? "Belum ada transaksi Service/Maintenance untuk pelanggan berkategori Corporate pada filter ini. Pastikan Kategori Pelanggan di Accurate diisi Corporate untuk pelanggan perusahaan." : "Tidak ada data."}</td></tr>`}</tbody></table></div></div>
+    ${cust.map(c => `<tr><td class="cab">${esc(c.cabang)}</td><td style="white-space:normal;min-width:180px">${esc(c.nama)}</td><td class="mono">${esc(c.id_pelanggan)}</td><td>${esc(c.kategori_pelanggan)}</td><td class="mono">${esc(c.no_wa)}</td>${corp ? "" : `<td class="num"><b>${fmtN(c.unit)}</b></td>`}<td class="num">${corp ? `<b>${fmtN(c.jumlah_faktur)}</b>` : fmtN(c.jumlah_faktur)}</td><td class="num">${rp(c.omzet)}</td><td class="num">${rp(c.gross_profit)}</td><td>${fmtDate(c.faktur_terakhir)}</td></tr>`).join("") || `<tr><td colspan="10" class="sub">Tidak ada data.</td></tr>`}</tbody></table></div></div>
   ${katCard(kat, label, corp ? null : ["unit", "Unit"])}
   </div>`;
   const re = () => pagePilar(el, key);
   bindFilter(el, re);
   const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
   el.querySelectorAll("[data-cab]").forEach(b => b.onclick = () => { D.cab = D.cab === b.dataset.cab ? "" : b.dataset.cab; re(); window.scrollTo({ top: 0, behavior: "smooth" }); });
-  bindTrend(el, days, d => corp ? `${fmtN(d.transaksi_corporate)} transaksi corporate<br>${fmtN(d.jumlah_faktur)} transaksi total · GP ${rp(d.gross_profit)}` : `${fmtN(d.unit)} unit · ${fmtN(d.jumlah_faktur)} transaksi<br>GP ${rp(d.gross_profit)} · Omzet ${rp(d.omzet)}`);
+  bindTrend(el, days, d => corp ? `${fmtN(d.jumlah_faktur)} transaksi<br>GP ${rp(d.gross_profit)} · Omzet ${rp(d.omzet)}` : `${fmtN(d.unit)} unit · ${fmtN(d.jumlah_faktur)} transaksi<br>GP ${rp(d.gross_profit)} · Omzet ${rp(d.omzet)}`);
 }
 
 /* =================== grafik batang harian =================== */
