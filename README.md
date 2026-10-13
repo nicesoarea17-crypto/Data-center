@@ -76,7 +76,7 @@ Setiap kali file di GitHub diubah, Cloudflare akan memperbarui aplikasinya secar
 ## Isi menu
 - **Dashboard Gross Profit:** filter cabang, bulan, dan pilar. Berisi GP per pilar, tren harian, laporan per cabang, GP per kategori, barang penyumbang GP terbesar, dan penjualan rugi.
 - **Tab Sewa:** GP pilar SEWA ditambah **jumlah unit (total QTY)** per cabang, per hari, dan per pelanggan.
-- **Tab Service & Maintenance Corporate:** hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). GP pilar ini ditambah **corporate termaintenance** = jumlah faktur (transaksi) pilar Service & Maintenance, per cabang, per hari, dan per pelanggan.
+- **Tab Service & Maintenance Corporate:** hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). GP pilar ini ditambah **corporate termaintenance** = jumlah pelanggan (perusahaan) yang bertransaksi di pilar ini; satu perusahaan dihitung satu walau punya beberapa transaksi.
 
 ## Hapus / Reset data (pembaruan harian)
 Menu **Unggah Data → Hapus / Reset data**:
@@ -96,7 +96,8 @@ Setelah dipasang, penghapusan wajib memasukkan PIN. Untuk mematikan PIN: `delete
 - **Pelanggan** dicocokkan dengan **Cabang + ID Pelanggan**, karena ID yang sama bisa dipakai cabang lain untuk orang berbeda. Unggah ulang akan memperbarui data pelanggan yang sudah ada.
 - **Faktur** dengan nomor yang sama di cabang yang sama akan diganti versi terbaru. Jadi aman mengunggah periode yang tumpang tindih, misalnya export mingguan yang mencakup awal bulan.
 - **Saling melengkapi:** faktur mendapat No WA, kecamatan, kota, dan referensi dari Data Pelanggan. Pelanggan mendapat riwayat transaksi (jumlah faktur, total belanja, total GP, faktur terakhir) dari faktur.
-- **Gross Profit = TOTAL HARGA − HARGA BELI** per baris faktur. Baris jasa dan sewa yang HARGA BELI-nya 0 di Accurate akan memiliki GP sama dengan omzet.
+- **Gross Profit = TOTAL HARGA − HARGA BELI − biaya sewa vendor.** HARGA BELI diambil dari faktur penjualan.
+- **Biaya sewa vendor** diambil dari **Rincian Faktur Pembelian** (unggah lewat menu Unggah Data; jenis "Faktur Pembelian" dikenali otomatis dari nama file). Baris dengan nama barang mengandung **SEWA** (mis. SEWA LAPTOP) atau kategori SEWA dijumlah per cabang per bulan, lalu dipotong dari penjualan pilar SEWA cabang & bulan yang sama, dibagi ke tiap transaksi sesuai QTY. Tab Sewa menampilkan tabel "Biaya sewa vendor" untuk mengecek pencocokannya.
 - **Tanggal Excel** dibaca persis seperti di Accurate, tanpa bergeser karena zona waktu.
 
 ## Hal yang perlu diketahui

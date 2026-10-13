@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MFlash Data Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Meja kerja satu kolom: bilah atas, navigasi tab, lalu isi halaman. */
+:root{
+  --bg:#F4F5F2; --surface:#FFFFFF; --sunk:#ECEEE9; --line:#D9DDD4; --ink:#18201B; --muted:#5D6760;
+  --accent:#D4511C; --accent-ink:#FFFFFF; --accent-soft:#FBE7DD; --data:#2E7D6B;
+  --ok:#1F7A4D; --ok-soft:#DDF1E5; --warn:#A15C00; --warn-soft:#FBEBCF; --bad:#B42318; --bad-soft:#FBE1DE;
+  --f-ui:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-data:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  --r:10px; color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#121613; --surface:#1A201C; --sunk:#232A25; --line:#323B35; --ink:#E9EEE9; --muted:#9AA59D;
+  --accent:#F07A45; --accent-ink:#1A0E08; --accent-soft:#3A2418; --data:#5FC2A8;
+  --ok:#5CC98E; --ok-soft:#17321F; --warn:#E8A94A; --warn-soft:#382A12; --bad:#F28B7F; --bad-soft:#3B1A17; color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:14px;line-height:1.5}
+.wrap{max-width:1320px;margin:0 auto;padding-inline:20px;padding-block:16px 48px;display:grid;gap:16px}
+@media (max-width:600px){.wrap{padding-inline:16px}}
+button,.btn{font:inherit;font-weight:600;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:8px 14px;cursor:pointer}
+button:hover{border-color:var(--muted)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.danger{background:var(--bad);border-color:var(--bad);color:var(--surface)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button:focus-visible,select:focus-visible,input:focus-visible,.drop:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+select,input{font:inherit;border:1px solid var(--line);border-radius:8px;padding:7px 10px;background:var(--surface);color:var(--ink);min-width:0}
+.sub{margin:0;color:var(--muted);font-size:13px}
+.mono{font-family:var(--f-data);font-size:12px}
+
+/* login */
+.login{min-height:100vh;display:grid;place-items:center;padding:16px}
+.login form{width:min(100%,380px);background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:26px;display:grid;gap:14px}
+.login h1{margin:0;font-size:24px;font-weight:800;letter-spacing:-.02em}
+.login label{display:grid;gap:4px;font-weight:600;font-size:13px}
+.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:700}
+.err{color:var(--bad);font-size:13px;min-height:1em}
+
+/* shell */
+.topbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+.brand{display:grid}
+.brand h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-.02em}
+.who{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip-user{background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:5px 12px;font-size:13px}
+.chip-user b{font-weight:700}
+.nav{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto}
+.nav button{border:none;background:none;border-bottom:2px solid transparent;border-radius:0;padding:10px 14px;color:var(--muted);white-space:nowrap}
+.nav button[aria-current="page"]{color:var(--ink);border-bottom-color:var(--accent)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:12px;min-width:0}
+.panel>*{min-width:0}
+.panel h2{margin:0;font-size:16px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.toolbar input[type=search]{flex:1 1 240px}
+.chip{border-radius:99px;padding:5px 12px;font-size:12.5px;font-weight:600}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.tablebox{overflow-x:auto;border:1px solid var(--line);border-radius:8px;min-width:0}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}
+th{background:var(--sunk);font-weight:600;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);position:sticky;top:0;z-index:1}
+tbody tr:hover td{background:var(--sunk)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+td.cab{font-weight:700}
+td.added{background:var(--ok-soft)}
+tr.tot td{font-weight:800;background:var(--sunk)}
+tr.sel td{background:var(--accent-soft)}
+.pill{display:inline-block;border-radius:99px;padding:1px 8px;font-size:11.5px;font-weight:700}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pager{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;color:var(--muted);font-size:13px}
+.notice{border-radius:8px;padding:10px 12px;font-size:13px;background:var(--sunk)}
+.notice.bad{background:var(--bad-soft)} .notice.warn{background:var(--warn-soft)} .notice.ok{background:var(--ok-soft)}
+.loading{color:var(--muted);padding:18px 0}
+.linkbtn{border:none;background:none;padding:0;font-weight:700;color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+
+/* dashboard */
+.gp-hero{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:860px){.gp-hero{grid-template-columns:repeat(2,minmax(0,1fr))}.gp-main{grid-column:1/-1}}
+.gp-main{background:var(--ink);color:var(--bg);border-radius:var(--r);padding:14px 16px;display:grid;gap:4px}
+.gp-main .l{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;opacity:.75}
+.gp-main .v{font-size:32px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+.gp-main .s{font-size:13px;opacity:.85}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:grid;gap:2px}
+.kpi .l{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.kpi .v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+.kpi .s{font-size:12px;color:var(--muted)}
+.gp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:12px}
+.card{border:1px solid var(--line);border-radius:var(--r);padding:14px;display:grid;gap:10px;align-content:start;min-width:0;background:var(--surface)}
+.card h3{margin:0;font-size:14.5px;font-weight:700;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.card .sub{margin-top:-6px}
+.hbars{display:grid;gap:8px}
+.hbar{display:grid;grid-template-columns:minmax(90px,150px) minmax(0,1fr) auto;gap:10px;align-items:center;font-size:13px}
+.hbar-l{font-weight:600;font-size:12px}
+.hbar-t{height:14px;background:var(--sunk);border-radius:4px;overflow:hidden}
+.hbar-t span{display:block;height:100%;background:var(--data);border-radius:0 4px 4px 0}
+.hbar-v{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;display:grid}
+.hbar-v small{font-weight:500;color:var(--muted);font-size:11.5px}
+.hbars.rank .hbar{grid-template-columns:minmax(120px,190px) minmax(0,1fr) auto}
+.hbars.rank .hbar-l{display:flex;gap:8px;align-items:center;font-size:13px}
+.rk{display:inline-grid;place-items:center;min-width:22px;height:22px;border-radius:99px;background:var(--sunk);color:var(--muted);font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.hbars.rank .hbar:first-child .rk{background:var(--accent);color:var(--accent-ink)}
+.trend{position:relative}
+.trend svg{display:block;overflow:visible}
+.trend .grid{stroke:var(--line);stroke-width:1} .trend .grid.zero{stroke:var(--muted)}
+.trend .ax{fill:var(--muted);font-size:11px;font-family:var(--f-ui)}
+.trend .b{fill:var(--data)} .trend .bneg{fill:var(--bad)}
+.trend g:hover .b,.trend g:focus .b{fill:var(--accent)} .trend g:focus{outline:none}
+.tip{position:absolute;width:180px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 6px 18px rgba(0,0,0,.12);pointer-events:none;font-variant-numeric:tabular-nums}
+
+/* unggah */
+.drop{border:1.5px dashed var(--line);border-radius:8px;padding:18px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:var(--sunk);cursor:pointer}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop strong{display:block}
+.hidden-input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.bar{height:8px;background:var(--sunk);border-radius:99px;overflow:hidden;min-width:120px}
+.bar span{display:block;height:100%;background:var(--data);transition:width .2s}
+.issues{display:grid;gap:10px}
+.issue{border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:8px;padding:12px 14px;display:grid;gap:4px;background:var(--surface)}
+.issue.bad{border-left-color:var(--bad)} .issue.ok{border-left-color:var(--ok)}
+.issue h3{margin:0;font-size:14px} .issue p{margin:0;color:var(--muted);font-size:13px;max-width:90ch}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:grid;place-items:center;padding:16px;z-index:10}
+.modal form{background:var(--surface);border-radius:12px;padding:20px;width:min(100%,380px);display:grid;gap:12px}
+.modal label{display:grid;gap:4px;font-weight:600;font-size:13px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="root"><p class="loading" style="padding:24px">Memuat aplikasi…</p></div>
+<script>
+// Penjaga: tampilkan penyebab bila aplikasi gagal jalan, bukan diam di "Memuat aplikasi…"
+(function(){
+  function show(m){var r=document.getElementById('root');if(!r)return;var d=document.createElement('div');d.className='notice bad';d.style.margin='24px';d.textContent=m;r.replaceChildren(d);}
+  window.addEventListener('error',function(e){
+    if(e.target&&e.target.tagName==='SCRIPT'){var f=(e.target.src||'').split('/').pop();
+      show(f==='xlsx.full.min.js'?'Pustaka Excel gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.':'File '+f+' tidak ditemukan. Pastikan '+f+' ada di GitHub pada folder yang sama dengan index.html (bukan di dalam subfolder), lalu tunggu Cloudflare deploy ulang.');}
+    else if(!window.__mfStarted){show('Aplikasi gagal dijalankan: '+(e.message||'kesalahan tidak dikenal')+'. Kemungkinan isi app.js atau config.js terpotong/berubah saat diunggah. Unggah ulang file aslinya.');}
+  },true);
+  setTimeout(function(){if(!window.__mfStarted)show('Aplikasi tidak berjalan. Pastikan app.js dan config.js sudah terunggah utuh di folder yang sama dengan index.html, lalu muat ulang dengan Ctrl+Shift+R.');},10000);
+})();
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
