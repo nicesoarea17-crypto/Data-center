@@ -331,6 +331,10 @@ async function pagePilar(el, key) {
     ${corp ? `<div class="kpi"><span class="l">Omzet</span><span class="v">${rpShort(s.rev)}</span><span class="s">HPP ${rpShort(s.cost)}</span></div>` : `<div class="kpi"><span class="l">Jumlah transaksi</span><span class="v">${fmtN(s.inv)}</span><span class="s">faktur ${esc(C.title)}</span></div>`}
     <div class="kpi"><span class="l">${corp ? "GP per corporate" : "GP per unit"}</span><span class="v">${rpShort(corp ? (s.pel ? s.gp / s.pel : 0) : (s.unit ? s.gp / s.unit : 0))}</span><span class="s">rata-rata</span></div>
   </div>
+  ${corp ? `<div class="gp-grid">
+    ${barCabang("Gross profit Maintenance per cabang", periodeLabel(), cab, r => r.gross_profit, rp)}
+    ${barCabang("Corporate termaintenance per cabang", periodeLabel() + " · jumlah perusahaan", cab, r => r.pelanggan, v => fmtN(v) + " corporate")}
+  </div>` : barCabang("Unit tersewa per cabang", periodeLabel() + " · total QTY pilar Sewa", cab, r => r.unit, v => fmtN(v) + " unit")}
   <div class="gp-grid">
     <div class="card"><h3>${corp ? "Corporate termaintenance per hari" : "Unit disewakan per hari"}</h3><p class="sub">${esc(label)} · jumlah ${corp ? "corporate yang bertransaksi di hari itu" : "unit"}</p>${trendSVG(days, corp ? "pelanggan" : "unit", true)}</div>
     <div class="card"><h3>Gross profit ${esc(C.title)} per hari</h3><p class="sub">${esc(label)}</p>${trendSVG(days, "gross_profit")}</div>
@@ -350,6 +354,15 @@ async function pagePilar(el, key) {
   const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
   el.querySelectorAll("[data-cab]").forEach(b => b.onclick = () => { D.cab = D.cab === b.dataset.cab ? "" : b.dataset.cab; re(); window.scrollTo({ top: 0, behavior: "smooth" }); });
   bindTrend(el, days, d => corp ? `${fmtN(d.pelanggan)} corporate · ${fmtN(d.jumlah_faktur)} transaksi<br>GP ${rp(d.gross_profit)} · Omzet ${rp(d.omzet)}` : `${fmtN(d.unit)} unit · ${fmtN(d.jumlah_faktur)} transaksi<br>GP ${rp(d.gross_profit)} · Omzet ${rp(d.omzet)}`);
+}
+
+/* =================== bar per cabang (untuk dibagikan ke tim) =================== */
+function barCabang(title, sub, rows, val, fmt) {
+  const list = rows.map(r => ({ c: r.cabang, v: +val(r) || 0 })).sort((a, b) => b.v - a.v || a.c.localeCompare(b.c));
+  const max = Math.max(0, ...list.map(x => x.v)), tot = list.reduce((a, x) => a + x.v, 0);
+  return `<div class="card"><h3>${esc(title)}</h3><p class="sub">${esc(sub)}</p>
+    <div class="hbars rank">${list.map((x, i) => `<div class="hbar"><div class="hbar-l"><span class="rk">${i + 1}</span>${esc(x.c)}</div><div class="hbar-t" role="img" aria-label="${esc(x.c)}: ${esc(fmt(x.v))}"><span style="width:${max > 0 ? Math.max(0, x.v) / max * 100 : 0}%"></span></div><div class="hbar-v">${esc(fmt(x.v))}<small>${tot ? Math.round(x.v / tot * 100) : 0}% dari total</small></div></div>`).join("") || `<p class="sub">Tidak ada data.</p>`}</div>
+    ${list.length ? `<p class="sub" style="margin-top:0">Total semua cabang: <b>${esc(fmt(tot))}</b>. Cabang yang belum muncul berarti belum ada data pada periode ini.</p>` : ""}</div>`;
 }
 
 /* =================== grafik batang harian =================== */
