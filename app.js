@@ -238,6 +238,10 @@ async function pageDashboard(el) {
     db.rpc("gp_cabang_pilar", args), db.rpc("gp_harian", cArgs), db.rpc("gp_kategori", cArgs),
     db.rpc("gp_top_barang", { ...cArgs, p_limit: 10 }), db.rpc("gp_rugi", { ...cArgs, p_limit: 300 })]);
   const allPilars = sortPilar([...new Set(matAll.map(r => r.pilar).concat(D.pilar ? [D.pilar] : []))]);
+  const mPil = [...new Set(matAll.map(r => r.pilar))].filter(PILAR_TABS.service.match);
+  const [kSewa, kMnt] = await Promise.all([
+    db.rpc("pilar_cabang", { ...args, p_pilar: ["SEWA"] }).catch(() => []),
+    mPil.length ? db.rpc("pilar_cabang", { ...args, p_pilar: mPil }).catch(() => []) : []]);
   const mat = D.pilar ? matAll.filter(r => r.pilar === D.pilar) : matAll;   // filter pilar
   const pilars = D.pilar ? [D.pilar] : allPilars;
   const sel = D.cab ? mat.filter(r => r.cabang === D.cab) : mat;            // filter cabang
@@ -249,6 +253,7 @@ async function pageDashboard(el) {
   el.innerHTML = `<div style="display:grid;gap:14px">
   ${filterBar(true, allPilars)}
   ${!matAll.length ? `<div class="notice warn">Belum ada faktur pada periode ini.${D.bulan !== "semua" ? ` <button class="linkbtn" id="dAll">Lihat semua periode</button>` : " Unggah file Rincian Faktur Penjualan di menu Unggah Data."}</div>` : ""}
+  ${kpiBand(kSewa, kMnt, mPil)}
   <div class="gp-hero">
     <div class="gp-main"><span class="l">Gross profit · ${esc(label)}</span><span class="v">${rp(T.gp)}</span><span class="s">Margin ${mPill(T.m, T.rev)} dari omzet ${rp(T.rev)}</span></div>
     <div class="kpi"><span class="l">Omzet</span><span class="v">${rpShort(T.rev)}</span><span class="s">${fmtN(T.inv)} faktur</span></div>
@@ -281,6 +286,25 @@ async function pageDashboard(el) {
   const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
   el.querySelectorAll("[data-cab]").forEach(b => b.onclick = () => { D.cab = D.cab === b.dataset.cab ? "" : b.dataset.cab; re(); window.scrollTo({ top: 0, behavior: "smooth" }); });
   bindTrend(el, days, d => `GP ${rp(d.gross_profit)}<br>Omzet ${rp(d.omzet)} · ${fmtN(d.jumlah_faktur)} faktur`);
+  el.querySelectorAll("[data-goto]").forEach(b => b.onclick = () => go(b.dataset.goto));
+}
+/* KPI utama: unit tersewa & GP Service & Maintenance Corporate (ikut filter cabang & bulan, tidak ikut filter pilar) */
+const KPI_TARGET = { unit: 918, corporate: 162 };   // target per bulan, untuk semua cabang
+function kpiBand(kSewa, kMnt, mPil) {
+  const pick = rs => D.cab ? rs.filter(r => r.cabang === D.cab) : rs;
+  const sum = rs => rs.reduce((o, r) => (o.rev += +r.omzet, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.pel += +r.pelanggan, o), { rev: 0, gp: 0, inv: 0, unit: 0, pel: 0 });
+  const a = sum(pick(kSewa)), b = sum(pick(kMnt));
+  const satuBulan = /^\d{4}-\d{2}$/.test(D.bulan) && !D.cab;
+  const rank = (rs, f) => { if (!D.cab) return ""; const l = [...rs].sort((x, y) => f(y) - f(x)); const i = l.findIndex(r => r.cabang === D.cab); return i < 0 ? "" : ` · peringkat ${i + 1} dari ${l.length} cabang`; };
+  const prog = (v, t, unit) => { const p = t ? v / t : 0; return `<div style="display:grid;gap:4px;margin-top:6px"><div style="height:8px;border-radius:999px;background:var(--line);overflow:hidden" role="img" aria-label="${Math.round(p * 100)}% dari target"><span style="display:block;height:100%;width:${Math.min(100, p * 100)}%;background:${p >= 1 ? "var(--ok)" : "var(--accent)"}"></span></div><span style="font-size:12px;color:var(--muted)"><b style="color:var(--ink)">${Math.round(p * 100)}%</b> dari target ${fmtN(t)} ${unit}/bulan${p < 1 ? ` · kurang ${fmtN(Math.max(0, t - v))}` : " · tercapai"}</span></div>`; };
+  const box = (inner, goto) => `<div style="background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:var(--r);padding:14px 16px;display:grid;gap:4px;align-content:start;min-width:0">${inner}<button class="linkbtn" data-goto="${goto}" style="justify-self:start;margin-top:6px;font-size:12.5px">Buka tab ${goto === "sewa" ? "Sewa" : "Service & Maintenance Corporate"} →</button></div>`;
+  const lab = t => `<span style="font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--accent)">KPI · ${t}</span>`;
+  const big = (v, small) => `<span style="font-size:30px;font-weight:800;letter-spacing:-.02em;line-height:1.1;font-variant-numeric:tabular-nums">${v}${small ? ` <small style="font-size:14px;font-weight:600">${small}</small>` : ""}</span>`;
+  const sub = t => `<span style="font-size:12.5px;color:var(--muted)">${t}</span>`;
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:10px">
+    ${box(lab("Unit tersewa") + big(fmtN(a.unit), "unit") + sub(`${esc(D.cab || "Semua cabang")} · ${esc(periodeLabel())} · ${fmtN(a.inv)} transaksi, ${fmtN(a.pel)} pelanggan · GP sewa ${rp(a.gp)}${rank(kSewa, r => +r.unit)}`) + (satuBulan ? prog(a.unit, KPI_TARGET.unit, "unit") : ""), "sewa")}
+    ${box(lab("Gross profit Service & Maintenance Corporate") + big(rp(b.gp)) + sub(mPil.length ? `${esc(D.cab || "Semua cabang")} · ${esc(periodeLabel())} · margin ${b.rev ? pct(b.gp / b.rev) : "–"} dari omzet ${rp(b.rev)}${rank(kMnt, r => +r.gross_profit)}` : "Belum ada faktur dengan pilar yang mengandung kata MAINTENANCE pada periode ini.") + sub(`<b style="color:var(--ink)">${fmtN(b.pel)}</b> corporate termaintenance · ${fmtN(b.inv)} transaksi`) + (satuBulan ? prog(b.pel, KPI_TARGET.corporate, "corporate") : ""), "service")}
+  </div>`;
 }
 function katCard(kat, label, extraCol) {
   return `<div class="card"><h3>GP per kategori penjualan</h3><p class="sub">${esc(label)}</p><div class="tablebox"><table><thead><tr><th>Pilar</th><th>Kategori penjualan</th>${extraCol ? `<th class="num">${extraCol[1]}</th>` : ""}<th class="num">Omzet</th><th class="num">Gross profit</th><th class="num">Margin</th></tr></thead><tbody>
@@ -313,7 +337,7 @@ async function pagePilar(el, key) {
   const adaPilar = [...new Set(known.map(r => r.pilar))];
   const cArgs = { ...args, p_cabang: D.cab || null, p_pilar: pArr };
   const corp = C.extra === "corporate";
-  const vend = corp ? [] : await db.rpc("sewa_vendor", args).catch(() => []);
+  const [vend, sendiri] = corp ? [[], []] : await Promise.all([db.rpc("sewa_vendor", args).catch(() => []), db.rpc("sewa_unit_sendiri", { ...args, p_cabang: D.cab || null }).catch(() => [])]);
   const [cab, days, kat, cust] = await Promise.all([
     db.rpc("pilar_cabang", { ...args, p_pilar: pArr }), db.rpc("gp_harian", cArgs), db.rpc("gp_kategori", cArgs),
     db.rpc("pilar_pelanggan", { ...cArgs, p_corporate: false, p_urut: corp ? "transaksi" : "unit", p_limit: 100 })]);
@@ -350,6 +374,7 @@ async function pagePilar(el, key) {
     <div class="tablebox" style="max-height:420px"><table><thead><tr><th>Cabang</th><th>Pelanggan</th><th>ID</th><th>Kategori</th><th>No WA</th>${corp ? "" : `<th class="num">Unit</th>`}<th class="num">Transaksi</th><th class="num">Omzet</th><th class="num">Gross profit</th><th>Transaksi terakhir</th></tr></thead><tbody>
     ${cust.map(c => `<tr><td class="cab">${esc(c.cabang)}</td><td style="white-space:normal;min-width:180px">${esc(c.nama)}</td><td class="mono">${esc(c.id_pelanggan)}</td><td>${esc(c.kategori_pelanggan)}</td><td class="mono">${esc(c.no_wa)}</td>${corp ? "" : `<td class="num"><b>${fmtN(c.unit)}</b></td>`}<td class="num">${corp ? `<b>${fmtN(c.jumlah_faktur)}</b>` : fmtN(c.jumlah_faktur)}</td><td class="num">${rp(c.omzet)}</td><td class="num">${rp(c.gross_profit)}</td><td>${fmtDate(c.faktur_terakhir)}</td></tr>`).join("") || `<tr><td colspan="10" class="sub">Tidak ada data.</td></tr>`}</tbody></table></div></div>
   ${corp ? "" : vendorCard(D.cab ? vend.filter(v => v.cabang === D.cab) : vend)}
+  ${corp ? "" : sendiriCard(sendiri, label)}
   ${katCard(kat, label, corp ? null : ["unit", "Unit"])}
   </div>`;
   const re = () => pagePilar(el, key);
@@ -361,14 +386,24 @@ async function pagePilar(el, key) {
 }
 
 function vendorCard(v) {
-  const t = v.reduce((o, r) => (o.b += +r.biaya_vendor, o.o += +r.omzet_sewa, o.uv += +r.unit_vendor, o.us += +r.unit_sewa, o), { b: 0, o: 0, uv: 0, us: 0 });
+  const t = v.reduce((o, r) => (o.b += +r.biaya_vendor, o.o += +r.omzet_sewa, o.uv += +r.unit_vendor, o.us += +r.unit_sewa, o.ui += +(r.unit_sendiri || 0), o), { b: 0, o: 0, uv: 0, us: 0, ui: 0 });
   const st = r => +r.biaya_vendor && !+r.omzet_sewa ? `<span class="pill bad">Ada pembelian, belum ada penjualan sewa</span>`
-    : !+r.biaya_vendor && +r.omzet_sewa ? `<span class="pill warn">Tanpa biaya vendor</span>` : `<span class="pill ok">Terpotong</span>`;
-  return `<div class="card"><h3>Biaya sewa vendor (Faktur Pembelian)</h3>
-    <p class="sub">Pembelian barang SEWA (mis. SEWA LAPTOP) per cabang per bulan, dipotong dari penjualan sewa cabang & bulan yang sama. "Tanpa biaya vendor" bisa berarti unit milik MFlash sendiri, atau faktur pembelian cabang itu belum diunggah.</p>
-    <div class="tablebox"><table><thead><tr><th>Cabang</th><th>Bulan</th><th class="num">Unit disewakan</th><th class="num">Unit dari vendor</th><th class="num">Omzet sewa</th><th class="num">Biaya vendor</th><th class="num">GP sewa</th><th>Status</th></tr></thead><tbody>
-    ${v.map(r => `<tr><td class="cab">${esc(r.cabang)}</td><td>${esc(namaBulan(String(r.bulan).slice(0, 7)))}</td><td class="num">${fmtN(r.unit_sewa)}</td><td class="num">${fmtN(r.unit_vendor)}</td><td class="num">${rp(r.omzet_sewa)}</td><td class="num">${rp(r.biaya_vendor)}</td><td class="num"><b>${rp(r.omzet_sewa - r.biaya_vendor)}</b></td><td>${st(r)}</td></tr>`).join("") || `<tr><td colspan="8" class="sub">Belum ada data sewa atau pembelian sewa pada periode ini.</td></tr>`}
-    ${v.length > 1 ? `<tr class="tot"><td colspan="2">TOTAL</td><td class="num">${fmtN(t.us)}</td><td class="num">${fmtN(t.uv)}</td><td class="num">${rp(t.o)}</td><td class="num">${rp(t.b)}</td><td class="num">${rp(t.o - t.b)}</td><td></td></tr>` : ""}</tbody></table></div></div>`;
+    : !+r.biaya_vendor && +r.omzet_sewa ? (+r.unit_sendiri ? `<span class="pill ok">Unit milik sendiri</span>` : `<span class="pill warn">Tanpa biaya vendor</span>`) : `<span class="pill ok">Terpotong</span>`;
+  return `<div class="card"><h3>Biaya sewa vendor & unit milik sendiri</h3>
+    <p class="sub">Biaya vendor = pembelian barang SEWA (mis. SEWA LAPTOP) per cabang per bulan dari Faktur Pembelian, dipotong dari penjualan sewa cabang & bulan yang sama. Unit milik sendiri = jumlah unit di Rincian Pemindahan Barang lewat gudang sewa. "Tanpa biaya vendor" tanpa unit milik sendiri berarti faktur pembelian atau pemindahan barang cabang itu belum diunggah.</p>
+    <div class="tablebox"><table><thead><tr><th>Cabang</th><th>Bulan</th><th class="num">Unit disewakan</th><th class="num">Unit dari vendor</th><th class="num">Unit milik sendiri</th><th class="num">Omzet sewa</th><th class="num">Biaya vendor</th><th class="num">GP sewa</th><th>Status</th></tr></thead><tbody>
+    ${v.map(r => `<tr><td class="cab">${esc(r.cabang)}</td><td>${esc(namaBulan(String(r.bulan).slice(0, 7)))}</td><td class="num">${fmtN(r.unit_sewa)}</td><td class="num">${fmtN(r.unit_vendor)}</td><td class="num">${fmtN(r.unit_sendiri || 0)}</td><td class="num">${rp(r.omzet_sewa)}</td><td class="num">${rp(r.biaya_vendor)}</td><td class="num"><b>${rp(r.omzet_sewa - r.biaya_vendor)}</b></td><td>${st(r)}</td></tr>`).join("") || `<tr><td colspan="9" class="sub">Belum ada data sewa atau pembelian sewa pada periode ini.</td></tr>`}
+    ${v.length > 1 ? `<tr class="tot"><td colspan="2">TOTAL</td><td class="num">${fmtN(t.us)}</td><td class="num">${fmtN(t.uv)}</td><td class="num">${fmtN(t.ui)}</td><td class="num">${rp(t.o)}</td><td class="num">${rp(t.b)}</td><td class="num">${rp(t.o - t.b)}</td><td></td></tr>` : ""}</tbody></table></div></div>`;
+}
+function sendiriCard(rows, label) {
+  const tot = rows.reduce((a, r) => a + (+r.qty || 0), 0);
+  const byName = new Map(); for (const r of rows) byName.set(r.nama_barang, (byName.get(r.nama_barang) || 0) + (+r.qty || 0));
+  const top = [...byName.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  return `<div class="card"><h3>Unit milik sendiri yang tersewa <span class="pill ${rows.length ? "ok" : "warn"}">${fmtN(tot)} unit</span></h3>
+    <p class="sub">${esc(label)} · dari <b>Rincian Pemindahan Barang</b> (gudang tujuan/dari mengandung kata SEWA). Kolom "Faktur sewa di hari yang sama" mencocokkan cabang + tanggal, karena laporan pemindahan belum memuat nomor faktur atau nama pelanggan.</p>
+    ${top.length ? `<p class="sub" style="margin-top:0">Paling sering: ${top.map(([n, q]) => `${esc(n)} <b>(${fmtN(q)})</b>`).join(" · ")}</p>` : ""}
+    <div class="tablebox" style="max-height:420px"><table><thead><tr><th>Cabang</th><th>Tanggal</th><th>Kode</th><th>Nama barang</th><th class="num">Qty</th><th>Gudang</th><th>Faktur sewa di hari yang sama</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td class="cab">${esc(r.cabang)}</td><td>${fmtDate(r.tanggal)}</td><td class="mono">${esc(r.kode_barang || "")}</td><td style="white-space:normal;min-width:220px"><b>${esc(r.nama_barang)}</b>${r.nomor ? `<br><span class="sub mono">${esc(r.nomor)}</span>` : ""}${r.keterangan ? `<br><span class="sub">${esc(r.keterangan)}</span>` : ""}</td><td class="num">${fmtN(r.qty)} ${esc(r.satuan || "")}</td><td>${esc(r.gudang || "")}</td><td style="white-space:normal;min-width:240px">${r.faktur_sewa_hari_itu ? esc(r.faktur_sewa_hari_itu).split("; ").join("<br>") : `<span class="pill warn">Belum ada faktur sewa di tanggal ini</span>`}</td></tr>`).join("") || `<tr><td colspan="7" class="sub">Belum ada data pemindahan ke/dari gudang sewa pada periode ini. Unggah file Rincian Pemindahan Barang di menu Unggah Data.</td></tr>`}</tbody></table></div></div>`;
 }
 
 /* =================== bar per cabang (untuk dibagikan ke tim) =================== */
@@ -444,6 +479,7 @@ async function exportRekon(key, cab, dari, sampai, onStep = () => {}) {
   if (ring.length) { const t = { "CABANG": "TOTAL" }; for (const k of Object.keys(ring[0])) if (k !== "CABANG") t[k] = k === "MARGIN %" ? null : ring.reduce((a, r) => a + (+r[k] || 0), 0); if (t["OMZET"]) t["MARGIN %"] = +(t["GROSS PROFIT"] / t["OMZET"] * 100).toFixed(1); ring.push(t); }
   const per = dari || sampai ? `${dari ? fmtDate(dari) : "awal"} – ${sampai ? fmtDate(sampai) : "sekarang"}` : "Semua periode";
   const info = [["Laporan", title], ["Cabang", cab || "Semua cabang"], ["Periode", per], ["Pilar", pil ? pil.join(", ") : "Semua"], ["Dibuat", fmtDateTime(new Date())], [], ["Cara hitung", "Gross profit = TOTAL HARGA − HARGA BELI (Accurate) − BIAYA SEWA VENDOR"], ["Biaya sewa vendor", "Total Faktur Pembelian barang SEWA per cabang per bulan, dibagi ke penjualan pilar SEWA cabang & bulan yang sama sesuai QTY"], ["Rekonsiliasi", "Cocokkan NO FAKTUR dan TOTAL HARGA di sheet Rincian dengan laporan Rincian Faktur Penjualan di Accurate pada filter yang sama"]];
+  if (key === "sewa") info.push(["Unit milik sendiri", "Dari Rincian Pemindahan Barang (gudang tujuan/dari mengandung SEWA). Dicocokkan ke faktur sewa cabang & tanggal yang sama, karena laporan pemindahan tidak memuat nomor faktur"]);
   if (key === "service") info.push(["Corporate termaintenance", "Jumlah pelanggan (ID pelanggan per cabang) yang bertransaksi; satu perusahaan dihitung satu"]);
   const wsInfo = XLSX.utils.aoa_to_sheet(info); wsInfo["!cols"] = [{ wch: 26 }, { wch: 110 }];
   XLSX.utils.book_append_sheet(wb, wsInfo, "Keterangan");
@@ -463,9 +499,13 @@ async function exportRekon(key, cab, dari, sampai, onStep = () => {}) {
     const beli = await db.all("pembelian", { select: "cabang,tgl,no_faktur,baris,kategori_barang,kode_barang,nama_barang,qty,harga_satuan,total_harga,pemasok,kategori_kebutuhan", filters: pf, or: `nama_barang.ilike."*SEWA*",kategori_barang.ilike.SEWA`, order: "cabang.asc,tgl.asc,no_faktur.asc" });
     XLSX.utils.book_append_sheet(wb, sheetRows(beli, [["cabang", "CABANG"], ["tgl", "TANGGAL"], ["no_faktur", "NOMOR FAKTUR PEMBELIAN"], ["kategori_barang", "KATEGORI BARANG"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "QTY"], ["harga_satuan", "@HARGA"], ["total_harga", "TOTAL HARGA"], ["pemasok", "PEMASOK"], ["kategori_kebutuhan", "KATEGORI KEBUTUHAN"]], "TOTAL"), "Pembelian SEWA (Vendor)");
     const v = await db.rpc("sewa_vendor", { p_dari: dari || null, p_sampai: sampai || null });
-    const vv = (cab ? v.filter(x => x.cabang === cab) : v).map(x => ({ "CABANG": x.cabang, "BULAN": namaBulan(String(x.bulan).slice(0, 7)), "UNIT DISEWAKAN": +x.unit_sewa, "UNIT DARI VENDOR": +x.unit_vendor, "OMZET SEWA": +x.omzet_sewa, "BIAYA VENDOR": +x.biaya_vendor, "GP SEWA": x.omzet_sewa - x.biaya_vendor, "STATUS": +x.biaya_vendor && !+x.omzet_sewa ? "Ada pembelian, belum ada penjualan sewa" : !+x.biaya_vendor && +x.omzet_sewa ? "Tanpa biaya vendor" : "Terpotong" }));
-    const wsV = XLSX.utils.json_to_sheet(vv); wsV["!cols"] = [{ wch: 18 }, { wch: 16 }, { wch: 15 }, { wch: 16 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 38 }];
+    const vv = (cab ? v.filter(x => x.cabang === cab) : v).map(x => ({ "CABANG": x.cabang, "BULAN": namaBulan(String(x.bulan).slice(0, 7)), "UNIT DISEWAKAN": +x.unit_sewa, "UNIT DARI VENDOR": +x.unit_vendor, "UNIT MILIK SENDIRI": +(x.unit_sendiri || 0), "OMZET SEWA": +x.omzet_sewa, "BIAYA VENDOR": +x.biaya_vendor, "GP SEWA": x.omzet_sewa - x.biaya_vendor, "STATUS": +x.biaya_vendor && !+x.omzet_sewa ? "Ada pembelian, belum ada penjualan sewa" : !+x.biaya_vendor && +x.omzet_sewa ? (+x.unit_sendiri ? "Unit milik sendiri" : "Tanpa biaya vendor") : "Terpotong" }));
+    const wsV = XLSX.utils.json_to_sheet(vv); wsV["!cols"] = [{ wch: 18 }, { wch: 16 }, { wch: 15 }, { wch: 16 }, { wch: 18 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 38 }];
     XLSX.utils.book_append_sheet(wb, wsV, "Biaya Vendor per Bulan");
+    onStep("Mengambil pemindahan barang (unit milik sendiri)…");
+    const own = await db.rpc("sewa_unit_sendiri", { p_dari: dari || null, p_sampai: sampai || null, p_cabang: cab || null }).catch(() => []);
+    own.sort((x, y) => x.cabang.localeCompare(y.cabang) || String(x.tanggal).localeCompare(String(y.tanggal)));
+    XLSX.utils.book_append_sheet(wb, sheetRows(own, [["cabang", "CABANG"], ["tanggal", "TANGGAL"], ["nomor", "NOMOR"], ["gudang", "GUDANG TUJUAN/DARI"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "KUANTITAS"], ["satuan", "SATUAN"], ["keterangan", "KETERANGAN"], ["faktur_sewa_hari_itu", "FAKTUR SEWA DI TANGGAL YANG SAMA"]], "TOTAL"), "Unit Milik Sendiri");
   }
   onStep("Menyusun file Excel…"); await sleep(30);
   const nm = `MFlash-Rekon-${title.replace(/[^A-Za-z]+/g, "")}${cab ? "-" + cab.replace(/\s+/g, "") : ""}-${(dari || "awal").replace(/-/g, "")}-${(sampai || "akhir").replace(/-/g, "")}.xlsx`;
@@ -489,7 +529,7 @@ async function pageUnduh(el) {
     <div class="notice" id="rIsi"></div>
     <div class="toolbar"><button class="primary" id="rBtn">Unduh Excel</button><span class="sub" id="rMsg" role="status"></span></div>
   </section>`;
-  const isi = () => { const k = $("#rJenis", el).value; $("#rIsi", el).innerHTML = `<b>Isi file:</b> Keterangan (filter &amp; cara hitung) · Ringkasan per Cabang · Rincian Faktur Penjualan (per baris, dengan total)` + (k === "sewa" ? " · Pembelian SEWA (Vendor) · Biaya Vendor per Bulan" : k === "service" ? " · Daftar Corporate" : ""); };
+  const isi = () => { const k = $("#rJenis", el).value; $("#rIsi", el).innerHTML = `<b>Isi file:</b> Keterangan (filter &amp; cara hitung) · Ringkasan per Cabang · Rincian Faktur Penjualan (per baris, dengan total)` + (k === "sewa" ? " · Pembelian SEWA (Vendor) · Biaya Vendor per Bulan · Unit Milik Sendiri (dari Pemindahan Barang)" : k === "service" ? " · Daftar Corporate" : ""); };
   $("#rJenis", el).onchange = () => { LS.set("mfdc-rekon", $("#rJenis", el).value); isi(); };
   isi();
   bindFilter(el, () => pageUnduh(el));
@@ -662,10 +702,79 @@ function detectBranch(name) {
   const sf = slug(name); for (const b of S.cabangs) if (sf.includes(slug(b))) return b;
   return "";
 }
+/* ---- Rincian Pemindahan Barang: laporan cetak Accurate (bukan tabel datar) ---- */
+const BLN_ID = { jan: 1, feb: 2, mar: 3, apr: 4, mei: 5, may: 5, jun: 6, jul: 7, agu: 8, agt: 8, aug: 8, sep: 9, okt: 10, oct: 10, nov: 11, des: 12, dec: 12 };
+function parseTglId(v) {
+  if (v == null || v === "") return null;
+  if (v instanceof Date) return ymd(v);
+  if (typeof v === "number" && v > 20000 && v < 80000) return ymd(serialToDate(v));
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
+  m = s.match(/^(\d{1,2})[\s\-/]+([A-Za-z]{3,})[\s\-/]+(\d{4})/); if (m && BLN_ID[m[2].slice(0, 3).toLowerCase()]) return `${m[3]}-${pad(BLN_ID[m[2].slice(0, 3).toLowerCase()])}-${pad(+m[1])}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
+  return null;
+}
+const isPindahanReport = (aoa, name) => /pemindahan|pindah_barang|transfer_barang/i.test(name) || aoa.slice(0, 8).some(r => r && r.some(v => typeof v === "string" && /pemindahan barang/i.test(v)));
+function parsePindahan(aoa) {
+  const cells = r => (r || []).map((v, i) => [i, v]).filter(([, v]) => v != null && String(v).trim() !== "");
+  let periode = null, judul = null, meta = {}, itemsSinceMeta = false, col = null; const recs = []; let baris = 0;
+  for (let r = 0; r < aoa.length; r++) {
+    const c = cells(aoa[r]); if (!c.length) continue;
+    const texts = c.map(([, v]) => typeof v === "string" ? v.trim() : v);
+    const first = String(texts[0]);
+    if (!judul && r < 3 && c.length === 1 && /mflash/i.test(first)) judul = first;
+    const pm = c.length <= 2 && typeof texts[0] === "string" && texts[0].match(/^dari\s+(.+?)\s+s\/?d\s+(.+)$/i);
+    if (pm) { periode = { dari: parseTglId(pm[1]), sampai: parseTglId(pm[2]) }; continue; }
+    if (/^(ACCURATE|Tercetak|Halaman)/i.test(first)) continue;
+    // baris judul tabel barang
+    const lower = texts.map(t => String(t).toLowerCase());
+    if (lower.some(t => t === "nama barang") && lower.some(t => /^(kuantitas|qty|jumlah)$/.test(t))) {
+      col = {}; c.forEach(([i, v]) => { const t = String(v).toLowerCase().trim(); if (/^kode/.test(t)) col.kode = i; else if (t === "nama barang") col.nama = i; else if (/^(kuantitas|qty|jumlah)$/.test(t)) col.qty = i; else if (/^satuan|^unit$/.test(t)) col.satuan = i; else if (/^(keterangan|catatan)/.test(t)) col.ket = i; });
+      continue;
+    }
+    // pasangan "Label : nilai" (bisa lebih dari satu per baris)
+    const pairs = [];
+    for (let k = 0; k < c.length; k++) {
+      const t = String(c[k][1]).trim();
+      if (t === ":" && k > 0) { const lab = String(c[k - 1][1]).trim(); const nx = c[k + 1]; const val = nx && !(c[k + 2] && String(c[k + 2][1]).trim() === ":") ? nx[1] : null; pairs.push([lab, val]); }
+      else if (/^[A-Za-z][^:]{1,40}:\s*$/.test(t)) { const nx = c[k + 1]; pairs.push([t.replace(/:\s*$/, ""), nx ? nx[1] : null]); }
+    }
+    if (pairs.length) {
+      if (itemsSinceMeta) { meta = {}; itemsSinceMeta = false; col = null; }
+      for (const [lab, val] of pairs) {
+        const l = lab.toLowerCase(); meta.raw = meta.raw || {}; if (val != null) meta.raw[lab] = val instanceof Date ? ymd(val) : val;
+        if (/^tanggal|^tgl/.test(l)) meta.tanggal = parseTglId(val);
+        else if (/nomor|^no\b|^no\./.test(l)) meta.nomor = val == null ? null : String(val).trim();
+        else if (/gudang/.test(l) && !/alamat/.test(l)) meta.gudang = val == null ? null : String(val).trim();
+        else if (/alamat/.test(l) && !/gudang/.test(l)) meta.alamat = val == null ? null : String(val).trim();
+        else if (/keterangan|catatan|deskripsi/.test(l)) meta.keterangan = val == null ? null : String(val).trim();
+      }
+      continue;
+    }
+    if (col && col.nama != null) {
+      const a = aoa[r]; const nama = a[col.nama]; if (nama == null || String(nama).trim() === "") continue;
+      const qty = col.qty != null ? num(a[col.qty]) : null;
+      baris++; itemsSinceMeta = true;
+      const kode = col.kode != null && a[col.kode] != null ? String(a[col.kode]).trim() : null;
+      const satuan = col.satuan != null && a[col.satuan] != null ? String(a[col.satuan]).trim() : null;
+      recs.push({ tanggal: meta.tanggal || null, nomor: meta.nomor || null, gudang: meta.gudang || null, alamat: meta.alamat || null,
+        keterangan: meta.keterangan || (col.ket != null && a[col.ket] != null ? String(a[col.ket]).trim() : null),
+        baris, kode_barang: kode, nama_barang: String(nama).trim(), qty, satuan,
+        data: { ...(meta.raw || {}), "Kode Barang": kode, "Nama Barang": String(nama).trim(), "Kuantitas": qty, "Satuan": satuan } });
+    }
+  }
+  return { recs, periode, judul };
+}
 async function parseFile(file) {
   const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false, cellNF: true });
   const aoa = sheetAOA(wb.Sheets[wb.SheetNames[0]]);
-  const hi = aoa.findIndex(r => r && r.filter(v => typeof v === "string" && v.trim()).length >= 3);
+  if (isPindahanReport(aoa, file.name)) {
+    const { recs, periode, judul } = parsePindahan(aoa);
+    if (!recs.length) throw new Error("laporan Pemindahan Barang terbaca, tetapi tidak ada baris barang");
+    let detected = detectBranch(file.name); if (!detected && judul) detected = detectBranch(judul);
+    return { id: Math.random().toString(36).slice(2), name: file.name, headers: ["TANGGAL", "NOMOR", "GUDANG TUJUAN/DARI", "KODE BARANG", "NAMA BARANG", "KUANTITAS", "SATUAN"], rows: recs, kind: "pindahan", detected, branch: lockedCabang() || detected, periode, status: "siap", done: 0 };
+  }
+  const hi =aoa.findIndex(r => r && r.filter(v => typeof v === "string" && v.trim()).length >= 3);
   if (hi < 0) throw new Error("baris judul kolom tidak ditemukan");
   const cols = []; const seen = {};
   aoa[hi].forEach((h, i) => { if (h == null || !String(h).trim()) return; let n = String(h).trim(); if (seen[n]) { seen[n]++; n += " (" + seen[n] + ")"; } else seen[n] = 1; cols.push([i, n]); });
@@ -720,22 +829,22 @@ async function pageUnggah(el) {
   const histHtml = `<section class="panel"><h2>Riwayat unggah</h2>
     <p class="sub">Tombol <b>Hapus</b> menghapus data yang berasal dari unggahan itu. Pelanggan yang sudah diperbarui oleh unggahan lain yang lebih baru tidak ikut terhapus.</p>
     <div class="tablebox"><table><thead><tr><th>Waktu</th><th>Cabang</th><th>Jenis</th><th>File</th><th class="num">Baris</th><th>Periode faktur</th><th>Oleh</th><th></th></tr></thead><tbody>
-    ${hist.map(h => `<tr><td>${fmtDateTime(h.diunggah_pada)}</td><td class="cab">${esc(h.cabang)}</td><td>${{ faktur: "Faktur Penjualan", pembelian: "Faktur Pembelian", pelanggan: "Data Pelanggan" }[h.jenis] || h.jenis}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:200px">${esc(h.nama_file)}</td><td class="num">${fmtN(h.jumlah_baris)}</td><td>${h.periode_dari ? fmtDate(h.periode_dari) + " – " + fmtDate(h.periode_sampai) : "–"}</td><td>${esc(h.diunggah_nama || "")}</td><td><button data-delup="${h.id}">Hapus</button></td></tr>`).join("") || `<tr><td colspan="8" class="sub">Belum ada data yang diunggah.</td></tr>`}</tbody></table></div>
+    ${hist.map(h => `<tr><td>${fmtDateTime(h.diunggah_pada)}</td><td class="cab">${esc(h.cabang)}</td><td>${{ faktur: "Faktur Penjualan", pembelian: "Faktur Pembelian", pelanggan: "Data Pelanggan", pindahan: "Pemindahan Barang" }[h.jenis] || h.jenis}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:200px">${esc(h.nama_file)}</td><td class="num">${fmtN(h.jumlah_baris)}</td><td>${h.periode_dari ? fmtDate(h.periode_dari) + " – " + fmtDate(h.periode_sampai) : "–"}</td><td>${esc(h.diunggah_nama || "")}</td><td><button data-delup="${h.id}">Hapus</button></td></tr>`).join("") || `<tr><td colspan="8" class="sub">Belum ada data yang diunggah.</td></tr>`}</tbody></table></div>
   </section>`;
-  const tot = stat.reduce((o, s) => (o.p += +s.pelanggan, o.f += +s.baris_faktur, o.b += +(s.baris_pembelian || 0), o), { p: 0, f: 0, b: 0 });
+  const tot = stat.reduce((o, s) => (o.p += +s.pelanggan, o.f += +s.baris_faktur, o.b += +(s.baris_pembelian || 0), o.m += +(s.baris_pindahan || 0), o), { p: 0, f: 0, b: 0, m: 0 });
   el.innerHTML = `<div style="display:grid;gap:14px">
   <div class="toolbar"><button class="chip" data-ut="unggah" aria-pressed="${U_TAB === "unggah"}">Unggah data</button><button class="chip" data-ut="hapus" aria-pressed="${U_TAB === "hapus"}">Hapus / Reset data</button></div>
   ${U_TAB === "unggah" ? `<section class="panel"><div><h2>Unggah file Accurate</h2>
-    <p class="sub">Unggah export <b>Daftar Pelanggan</b>, <b>Rincian Faktur Penjualan</b>, dan <b>Rincian Faktur Pembelian</b> (untuk biaya sewa vendor). Bisa banyak file dari cabang mana saja sekaligus. Pelanggan dengan ID yang sama diperbarui, faktur dengan nomor yang sama diganti versi terbaru, jadi aman mengunggah periode yang tumpang tindih.</p></div>
+    <p class="sub">Unggah export <b>Daftar Pelanggan</b>, <b>Rincian Faktur Penjualan</b>, <b>Rincian Faktur Pembelian</b> (untuk biaya sewa vendor), dan <b>Rincian Pemindahan Barang</b> (nama unit milik sendiri yang keluar lewat gudang sewa). Bisa banyak file dari cabang mana saja sekaligus. Pelanggan dengan ID yang sama diperbarui. Faktur dengan nomor yang sama diganti versi terbaru, dan pemindahan barang diganti per cabang untuk periode di file. Jadi aman mengunggah periode yang tumpang tindih.</p></div>
     <label style="display:grid;gap:4px;font-weight:600;font-size:13px;max-width:360px">Nama pengunggah<input id="upName" value="${esc(LS.get("mfdc-uploader") || "")}" placeholder="mis. Admin Bintara" autocomplete="name"></label>
     <label class="drop" id="drop" tabindex="0"><div><strong>Tarik file .xlsx ke sini, atau klik untuk memilih</strong><span class="sub">Cabang dikenali dari nama file (misal 003mflashbintar → Bintara)</span></div><span class="btn">Pilih file</span>
       <input type="file" id="fileInput" class="hidden-input" accept=".xlsx,.xls" multiple></label>
     <div id="upList"></div>
   </section>` : `<section class="panel"><div><h2>Hapus / Reset data</h2>
-    <p class="sub">Untuk pembaruan harian: kosongkan data, lalu unggah ulang file Accurate terbaru di tab <b>Unggah data</b>. Data yang dihapus <b>tidak bisa dikembalikan</b>. Isi database sekarang: <b>${fmtN(tot.p)}</b> pelanggan, <b>${fmtN(tot.f)}</b> baris faktur penjualan, dan <b>${fmtN(tot.b)}</b> baris faktur pembelian.</p></div>
+    <p class="sub">Untuk pembaruan harian: kosongkan data, lalu unggah ulang file Accurate terbaru di tab <b>Unggah data</b>. Data yang dihapus <b>tidak bisa dikembalikan</b>. Isi database sekarang: <b>${fmtN(tot.p)}</b> pelanggan, <b>${fmtN(tot.f)}</b> baris faktur penjualan, <b>${fmtN(tot.b)}</b> baris faktur pembelian, dan <b>${fmtN(tot.m)}</b> baris pemindahan barang.</p></div>
     <div class="toolbar">
       <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Cabang<select id="hCab"><option value="">Semua cabang</option>${S.cabangs.map(c => `<option>${esc(c)}</option>`).join("")}</select></label>
-      <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Data yang dihapus<select id="hJenis"><option value="semua">Semua (pelanggan, faktur, pembelian)</option><option value="faktur">Faktur Penjualan saja</option><option value="pelanggan">Data Pelanggan saja</option><option value="pembelian">Faktur Pembelian saja</option></select></label>
+      <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Data yang dihapus<select id="hJenis"><option value="semua">Semua (pelanggan, faktur, pembelian, pemindahan)</option><option value="faktur">Faktur Penjualan saja</option><option value="pelanggan">Data Pelanggan saja</option><option value="pembelian">Faktur Pembelian saja</option><option value="pindahan">Pemindahan Barang saja</option></select></label>
       ${pinOn ? `<label style="display:grid;gap:4px;font-weight:600;font-size:13px">PIN hapus<input id="hPin" type="password" autocomplete="off" style="width:130px"></label>` : ""}
       <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Ketik HAPUS untuk konfirmasi<input id="hKonf" autocomplete="off" style="width:200px"></label>
     </div>
@@ -749,14 +858,14 @@ async function pageUnggah(el) {
     if (!b.classList.contains("danger")) { b.classList.add("danger"); b.textContent = "Klik lagi untuk hapus"; setTimeout(() => { if (b.isConnected) { b.classList.remove("danger"); b.textContent = "Hapus"; } }, 4000); return; }
     let pin = null; if (pinOn) { pin = window.prompt ? window.prompt("PIN hapus:") : null; if (!pin) { toast("Masukkan PIN untuk menghapus. Atau gunakan tab Hapus / Reset data."); return; } }
     b.disabled = true;
-    try { const r = await db.rpc("hapus_upload", { p_upload: +b.dataset.delup, p_pin: pin }); BULAN = null; toast(`Terhapus: ${fmtN(r.pelanggan)} pelanggan, ${fmtN(r.faktur)} baris faktur, ${fmtN(r.pembelian || 0)} baris pembelian.`); pageUnggah(el); }
+    try { const r = await db.rpc("hapus_upload", { p_upload: +b.dataset.delup, p_pin: pin }); BULAN = null; toast(`Terhapus: ${fmtN(r.pelanggan)} pelanggan, ${fmtN(r.faktur)} baris faktur, ${fmtN(r.pembelian || 0)} baris pembelian, ${fmtN(r.pindahan || 0)} baris pemindahan.`); pageUnggah(el); }
     catch (e) { toast("Gagal menghapus: " + e.message); b.disabled = false; }
   });
   if (U_TAB === "hapus") {
     const upd = () => {
       const c = $("#hCab", el).value, j = $("#hJenis", el).value; const rs = c ? stat.filter(s => s.cabang === c) : stat;
-      const p = rs.reduce((o, s) => o + +s.pelanggan, 0), f = rs.reduce((o, s) => o + +s.baris_faktur, 0), bb = rs.reduce((o, s) => o + +(s.baris_pembelian || 0), 0);
-      const parts = []; if (j === "semua" || j === "pelanggan") parts.push(`<b>${fmtN(p)}</b> pelanggan`); if (j === "semua" || j === "faktur") parts.push(`<b>${fmtN(f)}</b> baris faktur penjualan`); if (j === "semua" || j === "pembelian") parts.push(`<b>${fmtN(bb)}</b> baris faktur pembelian`);
+      const p = rs.reduce((o, s) => o + +s.pelanggan, 0), f = rs.reduce((o, s) => o + +s.baris_faktur, 0), bb = rs.reduce((o, s) => o + +(s.baris_pembelian || 0), 0), mm = rs.reduce((o, s) => o + +(s.baris_pindahan || 0), 0);
+      const parts = []; if (j === "semua" || j === "pelanggan") parts.push(`<b>${fmtN(p)}</b> pelanggan`); if (j === "semua" || j === "faktur") parts.push(`<b>${fmtN(f)}</b> baris faktur penjualan`); if (j === "semua" || j === "pembelian") parts.push(`<b>${fmtN(bb)}</b> baris faktur pembelian`); if (j === "semua" || j === "pindahan") parts.push(`<b>${fmtN(mm)}</b> baris pemindahan barang`);
       $("#hInfo", el).innerHTML = `Akan menghapus ${parts.join(", ")} dari <b>${esc(c || "semua cabang")}</b>, beserta riwayat unggahnya.`;
       $("#hBtn", el).disabled = $("#hKonf", el).value.trim().toUpperCase() !== "HAPUS" || (pinOn && !$("#hPin", el).value);
     };
@@ -766,7 +875,7 @@ async function pageUnggah(el) {
       const b = $("#hBtn", el); b.disabled = true; $("#hMsg", el).textContent = "Menghapus…";
       try {
         const r = await db.rpc("hapus_data", { p_cabang: $("#hCab", el).value || null, p_jenis: $("#hJenis", el).value, p_pin: pinOn ? $("#hPin", el).value : null });
-        BULAN = null; toast(`Terhapus: ${fmtN(r.pelanggan)} pelanggan, ${fmtN(r.faktur)} baris faktur, ${fmtN(r.pembelian || 0)} baris pembelian.`); U_TAB = "unggah"; pageUnggah(el);
+        BULAN = null; toast(`Terhapus: ${fmtN(r.pelanggan)} pelanggan, ${fmtN(r.faktur)} baris faktur, ${fmtN(r.pembelian || 0)} baris pembelian, ${fmtN(r.pindahan || 0)} baris pemindahan.`); U_TAB = "unggah"; pageUnggah(el);
       } catch (e) { $("#hMsg", el).textContent = "Gagal: " + e.message; upd(); }
     };
     return;
@@ -789,6 +898,8 @@ function upProblem(f) {
   if (!f.kind) return "Pilih jenis data.";
   if (!f.branch) return "Pilih cabang.";
   if (lockedCabang() && f.detected && f.detected !== lockedCabang()) return `Nama file menunjukkan cabang ${f.detected}, bukan ${lockedCabang()}.`;
+  if (f.kind === "pindahan" && f.headers[0] !== "TANGGAL") return "File ini bukan laporan Rincian Pemindahan Barang.";
+  if (f.kind !== "pindahan" && f.headers[0] === "TANGGAL" && f.headers[2] === "GUDANG TUJUAN/DARI") return "File ini laporan Rincian Pemindahan Barang; pilih jenis Pemindahan Barang.";
   if (f.kind === "pembelian" && !findCol(f.headers, ALIAS.B.no)) return "Kolom nomor faktur pembelian (Nomor #) tidak ditemukan.";
   if (f.kind === "pembelian" && !findCol(f.headers, ALIAS.B.total)) return "Kolom Total Harga tidak ditemukan di faktur pembelian.";
   if (f.kind === "faktur" && !findCol(f.headers, ALIAS.F.cost)) return "Kolom HARGA BELI tidak ada; gross profit tidak bisa dihitung. Tambahkan kolom itu di template export.";
@@ -802,7 +913,7 @@ function renderUpList() {
   box.innerHTML = `<div class="tablebox"><table><thead><tr><th>File</th><th>Jenis</th><th>Cabang</th><th class="num">Baris</th><th>Status</th><th></th></tr></thead><tbody>
     ${UP.map(f => { const p = upProblem(f); const pr = f.total ? Math.round(f.done / f.total * 100) : 0;
       return `<tr><td class="mono" style="white-space:normal;word-break:break-all;min-width:200px">${esc(f.name)}</td>
-      <td><select data-id="${f.id}" data-k="kind" aria-label="Jenis"${f.status !== "siap" ? " disabled" : ""}><option value="">— pilih —</option><option value="pelanggan"${f.kind === "pelanggan" ? " selected" : ""}>Data Pelanggan</option><option value="faktur"${f.kind === "faktur" ? " selected" : ""}>Faktur Penjualan</option><option value="pembelian"${f.kind === "pembelian" ? " selected" : ""}>Faktur Pembelian</option></select></td>
+      <td><select data-id="${f.id}" data-k="kind" aria-label="Jenis"${f.status !== "siap" ? " disabled" : ""}><option value="">— pilih —</option><option value="pelanggan"${f.kind === "pelanggan" ? " selected" : ""}>Data Pelanggan</option><option value="faktur"${f.kind === "faktur" ? " selected" : ""}>Faktur Penjualan</option><option value="pembelian"${f.kind === "pembelian" ? " selected" : ""}>Faktur Pembelian</option><option value="pindahan"${f.kind === "pindahan" ? " selected" : ""}>Pemindahan Barang</option></select></td>
       <td><select data-id="${f.id}" data-k="branch" aria-label="Cabang"${lockedCabang() || f.status !== "siap" ? " disabled" : ""}><option value="">— pilih cabang —</option>${S.cabangs.map(b => `<option${b === f.branch ? " selected" : ""}>${esc(b)}</option>`).join("")}</select></td>
       <td class="num">${fmtN(f.rows.length)}</td>
       <td style="white-space:normal;min-width:220px">${f.status === "selesai" ? `<span class="pill ok">Terunggah</span> ${esc(f.msg || "")}` : f.status === "mengunggah" ? `<div class="bar"><span style="width:${pr}%"></span></div><span class="sub">${pr}%</span>` : f.status === "error" ? `<span class="pill bad">Gagal</span> ${esc(f.err)}` : p ? `<span class="pill bad">Perlu dicek</span> ${esc(p)}` : `<span class="pill warn">Siap diunggah</span>`}</td>
@@ -816,7 +927,7 @@ function renderUpList() {
 async function uploadAll() {
   const list = UP.filter(f => f.status === "siap" && !upProblem(f));
   // Pelanggan dulu, supaya faktur langsung bisa dilengkapi.
-  list.sort((a, b) => ({ pelanggan: 0, faktur: 1, pembelian: 2 }[a.kind] - { pelanggan: 0, faktur: 1, pembelian: 2 }[b.kind]));
+  list.sort((a, b) => ({ pelanggan: 0, faktur: 1, pembelian: 2, pindahan: 3 }[a.kind] - { pelanggan: 0, faktur: 1, pembelian: 2, pindahan: 3 }[b.kind]));
   for (const f of list) {
     f.status = "mengunggah"; f.done = 0; renderUpList();
     try {
@@ -828,6 +939,18 @@ async function uploadAll() {
           f.done = Math.min(recs.length, i + 500); renderUpList();
         }
         f.msg = `${fmtN(recs.length)} pelanggan disimpan.`;
+      } else if (f.kind === "pindahan") {
+        if (f.headers[0] !== "TANGGAL") throw new Error("File ini bukan laporan Rincian Pemindahan Barang.");
+        const recs = f.rows; f.total = recs.length;
+        const dates = recs.map(r => r.tanggal).filter(Boolean).sort();
+        const dari = f.periode?.dari || dates[0] || null, sampai = f.periode?.sampai || dates[dates.length - 1] || null;
+        const [u] = await db.insert("uploads", [{ cabang: f.branch, jenis: "pindahan", nama_file: f.name, jumlah_baris: recs.length, kolom: f.headers, periode_dari: dari, periode_sampai: sampai, diunggah_nama: uploader() }], { returning: true });
+        for (let i = 0; i < recs.length; i += 500) {
+          await db.rpc("simpan_pindahan", { p_cabang: f.branch, p_upload: u.id, p_dari: dari, p_sampai: sampai, p_hapus: i === 0, p_rows: recs.slice(i, i + 500) });
+          f.done = Math.min(recs.length, i + 500); renderUpList();
+        }
+        const sw = recs.filter(r => /SEWA/i.test(r.gudang || ""));
+        f.msg = `${fmtN(recs.length)} baris pemindahan disimpan; ${fmtN(sw.reduce((a, r) => a + (r.qty || 0), 0))} unit lewat gudang sewa.` + (dari && sampai ? ` Data pemindahan ${f.branch} periode ${fmtDate(dari)} – ${fmtDate(sampai)} diganti dengan file ini.` : "");
       } else {
         const beli = f.kind === "pembelian";
         const recs = beli ? mapPembelian(f) : mapFaktur(f); f.total = recs.length;
@@ -866,6 +989,8 @@ async function pageKualitas(el) {
     if (+s.faktur_tidak_cocok && pel) issues.push(["bad", `${s.cabang}: ${fmtN(s.faktur_tidak_cocok)} baris faktur tidak menemukan pelanggannya`, `ID pelanggan di faktur tidak ada di Data Pelanggan cabang yang sama. Unggah export pelanggan terbaru.`]);
     if (+s.baris_faktur && !+s.baris_pembelian) issues.push(["warn", `${s.cabang}: Faktur Pembelian belum diunggah`, `Biaya sewa vendor cabang ini belum terhitung, jadi GP Sewa bisa terlalu tinggi.`]);
     if (+s.baris_pembelian) issues.push(["ok", `${s.cabang}: Faktur Pembelian terunggah (${fmtN(s.baris_pembelian)} baris)`, `Biaya sewa vendor (barang SEWA): ${rp(s.biaya_sewa_vendor)}.`]);
+    if (+s.baris_pindahan) issues.push(["ok", `${s.cabang}: Pemindahan Barang terunggah (${fmtN(s.baris_pindahan)} baris)`, `Nama unit milik sendiri yang keluar lewat gudang sewa tampil di tab Sewa.`]);
+    else if (+s.baris_faktur) issues.push(["warn", `${s.cabang}: Pemindahan Barang belum diunggah`, `Nama unit milik sendiri yang tersewa belum bisa ditampilkan untuk cabang ini.`]);
     if (+s.tanpa_harga_beli) issues.push(["warn", `${s.cabang}: ${fmtN(s.tanpa_harga_beli)} baris faktur tanpa HARGA BELI`, `Baris ini dihitung dengan harga beli 0, sehingga gross profit-nya bisa terlalu tinggi.`]);
   }
   issues.sort((a, b) => ({ bad: 0, warn: 1, ok: 2 }[a[0]] - { bad: 0, warn: 1, ok: 2 }[b[0]]));
