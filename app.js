@@ -156,6 +156,7 @@ const PAGES = [
   ["pelanggan", "Data Pelanggan"],
   ["faktur", "Faktur Penjualan"],
   ["unggah", "Unggah Data"],
+  ["unduh", "Unduh Laporan"],
   ["kualitas", "Kualitas Data"],
 ];
 function renderShell() {
@@ -178,7 +179,7 @@ function go(p) {
   root().querySelectorAll("[data-page]").forEach(b => b.dataset.page === p ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   // wadah baru tiap pindah menu: halaman lama yang masih memuat tidak bisa menimpa halaman baru
   const el = document.createElement("div"); el.innerHTML = `<p class="loading">Memuat…</p>`; $("#page").replaceChildren(el);
-  ({ dashboard: pageDashboard, sewa: pageSewa, service: pageService, pelanggan: pagePelanggan, faktur: pageFaktur, unggah: pageUnggah, kualitas: pageKualitas }[p])(el)
+  ({ dashboard: pageDashboard, sewa: pageSewa, service: pageService, pelanggan: pagePelanggan, faktur: pageFaktur, unggah: pageUnggah, unduh: pageUnduh, kualitas: pageKualitas }[p])(el)
     .catch(e => { el.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; });
 }
 function toast(t) { const d = document.createElement("div"); d.className = "notice ok"; d.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:20;box-shadow:0 6px 18px rgba(0,0,0,.15)"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 3500); }
@@ -322,7 +323,7 @@ async function pagePilar(el, key) {
   const label = (D.cab || "Semua cabang") + " · " + periodeLabel();
   const sorted = [...rows].sort((a, b) => corp ? (b.pelanggan - a.pelanggan || b.gross_profit - a.gross_profit) : (b.unit - a.unit || b.gross_profit - a.gross_profit));
   el.innerHTML = `<div style="display:grid;gap:14px">
-  ${filterBar(false)}
+  <div class="toolbar" style="justify-content:space-between">${filterBar(false)}<button id="pDl">Unduh Excel rekonsiliasi</button></div>
   <p class="sub">Pilar: <b>${esc(pArr.join(", "))}</b>. ${esc(C.note)}</p>
   ${!pil.length ? `<div class="notice warn">Belum ada faktur dengan pilar ${key === "sewa" ? "SEWA" : "yang mengandung kata MAINTENANCE"} di data yang diunggah. Pilar yang ada: ${esc(adaPilar.join(", ") || "-")}.</div>` : !cab.length ? `<div class="notice warn">Belum ada faktur ${esc(C.title)} pada periode ini.${D.bulan !== "semua" ? ` <button class="linkbtn" id="dAll">Lihat semua periode</button>` : ""}</div>` : ""}
   <div class="gp-hero">
@@ -352,6 +353,7 @@ async function pagePilar(el, key) {
   ${katCard(kat, label, corp ? null : ["unit", "Unit"])}
   </div>`;
   const re = () => pagePilar(el, key);
+  $("#pDl", el).onclick = async () => { const b = $("#pDl", el); b.disabled = true; try { await unduhDenganProgres(key, D.cab || null, dari || null, sampai || null); } catch (e) {} b.disabled = false; };
   bindFilter(el, re);
   const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
   el.querySelectorAll("[data-cab]").forEach(b => b.onclick = () => { D.cab = D.cab === b.dataset.cab ? "" : b.dataset.cab; re(); window.scrollTo({ top: 0, behavior: "smooth" }); });
@@ -403,6 +405,95 @@ function bindTrend(el, days, html) {
       g.onmouseleave = g.onblur = () => { tip.hidden = true; };
     });
   });
+}
+
+/* =================== UNDUH LAPORAN (rekonsiliasi dengan Accurate) =================== */
+async function resolvePilar(key) {
+  const known = await db.rpc("gp_cabang_pilar", { p_dari: null, p_sampai: null });
+  const all = [...new Set(known.map(r => r.pilar))];
+  if (key === "semua") return { pil: null, all };
+  const C = PILAR_TABS[key]; const pil = all.filter(C.match);
+  return { pil: pil.length ? pil : (key === "sewa" ? ["SEWA"] : ["SERVICE & MAINTENANCE CORPORATE"]), all };
+}
+const REK_COLS = [["cabang", "CABANG"], ["tgl_faktur", "TGL FAKTUR"], ["no_faktur", "NO FAKTUR"], ["baris", "BARIS KE"], ["id_pelanggan", "ID PELANGGAN"], ["nama_customer", "NAMA CUSTOMER"], ["kategori_pelanggan", "KATEGORI PELANGGAN"], ["pilar", "PILAR"], ["kategori_penjualan", "KATEGORI PENJUALAN"], ["kategori_barang", "KATEGORI BARANG"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "QTY"], ["harga_satuan", "@HARGA"], ["total_harga", "TOTAL HARGA"], ["harga_beli", "HARGA BELI (ACCURATE)"], ["biaya_vendor", "BIAYA SEWA VENDOR"], ["hpp", "HPP TOTAL"], ["gross_profit", "GROSS PROFIT"], ["penjual_default", "PENJUAL DEFAULT"], ["nama_admin", "NAMA ADMIN"], ["no_wa", "NO WA"]];
+const SUM_KEYS = ["qty", "total_harga", "harga_beli", "biaya_vendor", "hpp", "gross_profit"];
+function sheetRows(rows, cols, totalLabel) {
+  const out = rows.map(r => Object.fromEntries(cols.map(([k, h]) => [h, isEmpty(r[k]) ? null : (typeof r[k] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r[k]) ? toCell(r[k]) : (["qty", "harga_satuan", "total_harga", "harga_beli", "biaya_vendor", "hpp", "gross_profit", "total"].includes(k) ? +r[k] : r[k]))])));
+  if (totalLabel && rows.length) out.push(Object.fromEntries(cols.map(([k, h], i) => [h, i === 0 ? totalLabel : SUM_KEYS.includes(k) ? Math.round(rows.reduce((a, r) => a + (+r[k] || 0), 0) * 100) / 100 : null])));
+  const ws = XLSX.utils.json_to_sheet(out, { header: cols.map(c => c[1]), cellDates: true, dateNF: "dd/mm/yyyy" });
+  ws["!cols"] = cols.map(([, h]) => ({ wch: Math.min(40, Math.max(11, h.length + 2)) }));
+  return ws;
+}
+async function exportRekon(key, cab, dari, sampai, onStep = () => {}) {
+  const { pil } = await resolvePilar(key);
+  const title = key === "sewa" ? "Sewa" : key === "service" ? "Service & Maintenance Corporate" : "Semua Pilar";
+  const f = []; if (cab) f.push(["cabang", "eq", cab]); if (dari) f.push(["tgl_faktur", "gte", dari]); if (sampai) f.push(["tgl_faktur", "lte", sampai]);
+  if (pil) f.push(["pilar", "in", "(" + pil.map(p => `"${p.replace(/"/g, "")}"`).join(",") + ")"]);
+  const rows = await db.all("v_faktur", { select: REK_COLS.map(c => c[0]).join(","), filters: f, order: "cabang.asc,tgl_faktur.asc,no_faktur.asc,baris.asc" }, n => onStep(`Mengambil faktur penjualan… ${fmtN(n)} baris`));
+  const wb = XLSX.utils.book_new();
+  // Ringkasan per cabang dihitung dari baris yang sama dengan sheet rincian, supaya angkanya pasti cocok
+  const byC = new Map(); for (const r of rows) { if (!byC.has(r.cabang)) byC.set(r.cabang, []); byC.get(r.cabang).push(r); }
+  const ring = [...byC.entries()].sort((a, b) => S.cabangs.indexOf(a[0]) - S.cabangs.indexOf(b[0])).map(([c, rs]) => {
+    const s = k => Math.round(rs.reduce((a, r) => a + (+r[k] || 0), 0) * 100) / 100; const omzet = s("total_harga"), gp = s("gross_profit");
+    const o = { "CABANG": c, "JUMLAH TRANSAKSI (FAKTUR)": new Set(rs.map(r => r.no_faktur)).size };
+    if (key === "sewa") o["UNIT TERSEWA (QTY)"] = s("qty");
+    if (key === "service") o["CORPORATE TERMAINTENANCE"] = new Set(rs.map(r => r.id_pelanggan || r.nama_customer)).size;
+    Object.assign(o, { "OMZET": omzet, "HARGA BELI (ACCURATE)": s("harga_beli"), "BIAYA SEWA VENDOR": s("biaya_vendor"), "HPP TOTAL": s("hpp"), "GROSS PROFIT": gp, "MARGIN %": omzet ? +(gp / omzet * 100).toFixed(1) : 0 });
+    return o;
+  });
+  if (ring.length) { const t = { "CABANG": "TOTAL" }; for (const k of Object.keys(ring[0])) if (k !== "CABANG") t[k] = k === "MARGIN %" ? null : ring.reduce((a, r) => a + (+r[k] || 0), 0); if (t["OMZET"]) t["MARGIN %"] = +(t["GROSS PROFIT"] / t["OMZET"] * 100).toFixed(1); ring.push(t); }
+  const per = dari || sampai ? `${dari ? fmtDate(dari) : "awal"} – ${sampai ? fmtDate(sampai) : "sekarang"}` : "Semua periode";
+  const info = [["Laporan", title], ["Cabang", cab || "Semua cabang"], ["Periode", per], ["Pilar", pil ? pil.join(", ") : "Semua"], ["Dibuat", fmtDateTime(new Date())], [], ["Cara hitung", "Gross profit = TOTAL HARGA − HARGA BELI (Accurate) − BIAYA SEWA VENDOR"], ["Biaya sewa vendor", "Total Faktur Pembelian barang SEWA per cabang per bulan, dibagi ke penjualan pilar SEWA cabang & bulan yang sama sesuai QTY"], ["Rekonsiliasi", "Cocokkan NO FAKTUR dan TOTAL HARGA di sheet Rincian dengan laporan Rincian Faktur Penjualan di Accurate pada filter yang sama"]];
+  if (key === "service") info.push(["Corporate termaintenance", "Jumlah pelanggan (ID pelanggan per cabang) yang bertransaksi; satu perusahaan dihitung satu"]);
+  const wsInfo = XLSX.utils.aoa_to_sheet(info); wsInfo["!cols"] = [{ wch: 26 }, { wch: 110 }];
+  XLSX.utils.book_append_sheet(wb, wsInfo, "Keterangan");
+  const wsR = XLSX.utils.json_to_sheet(ring); wsR["!cols"] = Object.keys(ring[0] || { CABANG: 1 }).map(k => ({ wch: Math.max(12, k.length + 2) }));
+  XLSX.utils.book_append_sheet(wb, wsR, "Ringkasan per Cabang");
+  XLSX.utils.book_append_sheet(wb, sheetRows(rows, REK_COLS, "TOTAL"), "Rincian Faktur Penjualan");
+  if (key === "service") {
+    onStep("Menyusun daftar corporate…");
+    const m = new Map(); for (const r of rows) { const k = r.cabang + "|" + (r.id_pelanggan || r.nama_customer); let o = m.get(k); if (!o) { o = { cabang: r.cabang, id_pelanggan: r.id_pelanggan, nama_customer: r.nama_customer, kategori_pelanggan: r.kategori_pelanggan, no_wa: r.no_wa, f: new Set(), total_harga: 0, gross_profit: 0, terakhir: null }; m.set(k, o); } o.f.add(r.no_faktur); o.total_harga += +r.total_harga || 0; o.gross_profit += +r.gross_profit || 0; if (!o.terakhir || r.tgl_faktur > o.terakhir) o.terakhir = r.tgl_faktur; }
+    const list = [...m.values()].map(o => ({ ...o, transaksi: o.f.size })).sort((a, b) => a.cabang.localeCompare(b.cabang) || b.transaksi - a.transaksi);
+    XLSX.utils.book_append_sheet(wb, sheetRows(list, [["cabang", "CABANG"], ["id_pelanggan", "ID PELANGGAN"], ["nama_customer", "NAMA CORPORATE"], ["kategori_pelanggan", "KATEGORI PELANGGAN"], ["no_wa", "NO WA"], ["transaksi", "JUMLAH TRANSAKSI"], ["total_harga", "OMZET"], ["gross_profit", "GROSS PROFIT"], ["terakhir", "TRANSAKSI TERAKHIR"]]), "Daftar Corporate");
+  }
+  if (key === "sewa") {
+    onStep("Mengambil faktur pembelian SEWA…");
+    const pf = []; if (cab) pf.push(["cabang", "eq", cab]);
+    const bDari = dari ? dari.slice(0, 7) + "-01" : null; if (bDari) pf.push(["tgl", "gte", bDari]); if (sampai) pf.push(["tgl", "lte", sampai]);
+    const beli = await db.all("pembelian", { select: "cabang,tgl,no_faktur,baris,kategori_barang,kode_barang,nama_barang,qty,harga_satuan,total_harga,pemasok,kategori_kebutuhan", filters: pf, or: `nama_barang.ilike."*SEWA*",kategori_barang.ilike.SEWA`, order: "cabang.asc,tgl.asc,no_faktur.asc" });
+    XLSX.utils.book_append_sheet(wb, sheetRows(beli, [["cabang", "CABANG"], ["tgl", "TANGGAL"], ["no_faktur", "NOMOR FAKTUR PEMBELIAN"], ["kategori_barang", "KATEGORI BARANG"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "QTY"], ["harga_satuan", "@HARGA"], ["total_harga", "TOTAL HARGA"], ["pemasok", "PEMASOK"], ["kategori_kebutuhan", "KATEGORI KEBUTUHAN"]], "TOTAL"), "Pembelian SEWA (Vendor)");
+    const v = await db.rpc("sewa_vendor", { p_dari: dari || null, p_sampai: sampai || null });
+    const vv = (cab ? v.filter(x => x.cabang === cab) : v).map(x => ({ "CABANG": x.cabang, "BULAN": namaBulan(String(x.bulan).slice(0, 7)), "UNIT DISEWAKAN": +x.unit_sewa, "UNIT DARI VENDOR": +x.unit_vendor, "OMZET SEWA": +x.omzet_sewa, "BIAYA VENDOR": +x.biaya_vendor, "GP SEWA": x.omzet_sewa - x.biaya_vendor, "STATUS": +x.biaya_vendor && !+x.omzet_sewa ? "Ada pembelian, belum ada penjualan sewa" : !+x.biaya_vendor && +x.omzet_sewa ? "Tanpa biaya vendor" : "Terpotong" }));
+    const wsV = XLSX.utils.json_to_sheet(vv); wsV["!cols"] = [{ wch: 18 }, { wch: 16 }, { wch: 15 }, { wch: 16 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 38 }];
+    XLSX.utils.book_append_sheet(wb, wsV, "Biaya Vendor per Bulan");
+  }
+  onStep("Menyusun file Excel…"); await sleep(30);
+  const nm = `MFlash-Rekon-${title.replace(/[^A-Za-z]+/g, "")}${cab ? "-" + cab.replace(/\s+/g, "") : ""}-${(dari || "awal").replace(/-/g, "")}-${(sampai || "akhir").replace(/-/g, "")}.xlsx`;
+  saveWb(wb, nm);
+  return { rows: rows.length, name: nm };
+}
+async function unduhDenganProgres(key, cab, dari, sampai) {
+  const pg = progress("Menyiapkan laporan…");
+  try { const r = await exportRekon(key, cab, dari, sampai, t => pg.set(t)); pg.close(); toast(`${r.name} diunduh (${fmtN(r.rows)} baris faktur).`); return r; }
+  catch (e) { pg.close(); toast("Gagal mengunduh: " + e.message); throw e; }
+}
+async function pageUnduh(el) {
+  await loadBulan();
+  const R = LS.get("mfdc-rekon") || "sewa";
+  el.innerHTML = `<section class="panel"><div><h2>Unduh laporan untuk rekonsiliasi</h2>
+    <p class="sub">Pilih laporan, cabang, dan bulan, lalu unduh Excel. Isinya sama dengan angka di dashboard, lengkap dengan nomor faktur per baris, supaya bisa dicocokkan dengan laporan di Accurate.</p></div>
+    <div class="toolbar">
+      <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Laporan<select id="rJenis"><option value="sewa"${R === "sewa" ? " selected" : ""}>Sewa</option><option value="service"${R === "service" ? " selected" : ""}>Service &amp; Maintenance Corporate</option><option value="semua"${R === "semua" ? " selected" : ""}>Semua pilar (Dashboard GP)</option></select></label>
+    </div>
+    ${filterBar(false)}
+    <div class="notice" id="rIsi"></div>
+    <div class="toolbar"><button class="primary" id="rBtn">Unduh Excel</button><span class="sub" id="rMsg" role="status"></span></div>
+  </section>`;
+  const isi = () => { const k = $("#rJenis", el).value; $("#rIsi", el).innerHTML = `<b>Isi file:</b> Keterangan (filter &amp; cara hitung) · Ringkasan per Cabang · Rincian Faktur Penjualan (per baris, dengan total)` + (k === "sewa" ? " · Pembelian SEWA (Vendor) · Biaya Vendor per Bulan" : k === "service" ? " · Daftar Corporate" : ""); };
+  $("#rJenis", el).onchange = () => { LS.set("mfdc-rekon", $("#rJenis", el).value); isi(); };
+  isi();
+  bindFilter(el, () => pageUnduh(el));
+  $("#rBtn", el).onclick = async () => { const b = $("#rBtn", el); b.disabled = true; const [dari, sampai] = periode(); try { const r = await unduhDenganProgres($("#rJenis", el).value, D.cab || null, dari || null, sampai || null); $("#rMsg", el).textContent = `Terunduh: ${r.name}`; } catch (e) { $("#rMsg", el).textContent = "Gagal: " + e.message; } b.disabled = false; };
 }
 
 /* =================== DATA TABLES =================== */
