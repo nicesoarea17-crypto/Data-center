@@ -68,14 +68,14 @@ Setiap kali file di GitHub diubah, Cloudflare akan memperbarui aplikasinya secar
 
 ### 6. Unggah data pertama
 1. Buka alamat aplikasi.
-2. Buka menu **Unggah Data**, isi **Nama pengunggah**, tarik file export Accurate (Daftar Pelanggan dan Rincian Faktur Penjualan) dari semua cabang, lalu klik **Unggah ke server**.
+2. Buka menu **Unggah Data**, isi **Nama pengunggah**, tarik file export Accurate (Daftar Pelanggan, Rincian Faktur Penjualan, Rincian Faktur Pembelian, Rincian Pemindahan Barang) dari semua cabang, lalu klik **Unggah ke server**.
 3. Buka **Dashboard Gross Profit**. Angkanya langsung tampil.
 
 ---
 
 ## Isi menu
-- **Dashboard Gross Profit:** filter cabang, bulan, dan pilar. Berisi GP per pilar, tren harian, laporan per cabang, GP per kategori, barang penyumbang GP terbesar, dan penjualan rugi.
-- **Tab Sewa:** GP pilar SEWA ditambah **jumlah unit (total QTY)** per cabang, per hari, dan per pelanggan.
+- **Dashboard Gross Profit:** di paling atas ada **highlight KPI**: *Unit tersewa* (dengan progres target 918 unit/bulan) dan *Gross profit Service & Maintenance Corporate* (dengan jumlah corporate termaintenance, target 162/bulan). Progres target tampil saat filter satu bulan dan semua cabang; saat memilih satu cabang tampil peringkat cabang. Target bisa diubah di `app.js` (`KPI_TARGET`). Di bawahnya: filter cabang, bulan, dan pilar, GP per pilar, tren harian, laporan per cabang, GP per kategori, barang penyumbang GP terbesar, dan penjualan rugi.
+- **Tab Sewa:** GP pilar SEWA ditambah **jumlah unit (total QTY)** per cabang, per hari, dan per pelanggan, tabel biaya vendor & unit milik sendiri, serta **Unit milik sendiri yang tersewa** (nama barang dari Rincian Pemindahan Barang).
 - **Tab Service & Maintenance Corporate:** hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). GP pilar ini ditambah **corporate termaintenance** = jumlah pelanggan (perusahaan) yang bertransaksi di pilar ini; satu perusahaan dihitung satu walau punya beberapa transaksi.
 
 ## Unduh Laporan (rekonsiliasi dengan Accurate)
@@ -101,6 +101,7 @@ Setelah dipasang, penghapusan wajib memasukkan PIN. Untuk mematikan PIN: `delete
 - **Saling melengkapi:** faktur mendapat No WA, kecamatan, kota, dan referensi dari Data Pelanggan. Pelanggan mendapat riwayat transaksi (jumlah faktur, total belanja, total GP, faktur terakhir) dari faktur.
 - **Gross Profit = TOTAL HARGA − HARGA BELI − biaya sewa vendor.** HARGA BELI diambil dari faktur penjualan.
 - **Biaya sewa vendor** diambil dari **Rincian Faktur Pembelian** (unggah lewat menu Unggah Data; jenis "Faktur Pembelian" dikenali otomatis dari nama file). Baris dengan nama barang mengandung **SEWA** (mis. SEWA LAPTOP) atau kategori SEWA dijumlah per cabang per bulan, lalu dipotong dari penjualan pilar SEWA cabang & bulan yang sama, dibagi ke tiap transaksi sesuai QTY. Tab Sewa menampilkan tabel "Biaya sewa vendor" untuk mengecek pencocokannya.
+- **Rincian Pemindahan Barang** (unit milik sendiri): laporan cetak Accurate ini dikenali otomatis. Baris barang dengan *Gudang Tujuan/Dari* mengandung kata **SEWA** dihitung sebagai unit milik sendiri yang tersewa, lalu dicocokkan ke faktur sewa cabang & tanggal yang sama (laporan ini tidak memuat nomor faktur). Mengunggah ulang file mengganti data pemindahan cabang itu untuk periode di file (baris "Dari … s/d …"), jadi tidak dobel.
 - **Tanggal Excel** dibaca persis seperti di Accurate, tanpa bergeser karena zona waktu.
 
 ## Hal yang perlu diketahui
