@@ -78,6 +78,9 @@ Setiap kali file di GitHub diubah, Cloudflare akan memperbarui aplikasinya secar
 - **Tab Sewa:** GP pilar SEWA ditambah **jumlah unit (total QTY)** per cabang, per hari, dan per pelanggan.
 - **Tab Service & Maintenance Corporate:** hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). GP pilar ini ditambah **corporate termaintenance** = jumlah pelanggan (perusahaan) yang bertransaksi di pilar ini; satu perusahaan dihitung satu walau punya beberapa transaksi.
 
+## Unduh Laporan (rekonsiliasi dengan Accurate)
+Menu **Unduh Laporan** (atau tombol **Unduh Excel rekonsiliasi** di tab Sewa / Service & Maintenance Corporate): pilih laporan, cabang, dan bulan, lalu unduh. File Excel berisi sheet Keterangan, Ringkasan per Cabang, Rincian Faktur Penjualan per baris (dengan NO FAKTUR dan baris TOTAL), ditambah Pembelian SEWA & Biaya Vendor per Bulan untuk laporan Sewa, atau Daftar Corporate untuk laporan Maintenance. Cocokkan NO FAKTUR dan TOTAL HARGA dengan laporan Accurate pada filter yang sama.
+
 ## Hapus / Reset data (pembaruan harian)
 Menu **Unggah Data → Hapus / Reset data**:
 - Pilih cabang (atau semua cabang) dan jenis data (semua, faktur saja, atau pelanggan saja), ketik **HAPUS**, lalu klik **Hapus data**. Setelah itu unggah ulang file Accurate terbaru.
