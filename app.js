@@ -249,6 +249,7 @@ async function pageDashboard(el) {
   const pAgg = pilars.map(p => [p, withM(sumRows(sel.filter(r => r.pilar === p)))]);
   const maxP = Math.max(0, ...pAgg.map(x => x[1].gp));
   const cabs = [...new Set(mat.map(r => r.cabang))].map(c => { const rs = mat.filter(r => r.cabang === c); return { c, t: withM(sumRows(rs)), p: pilars.map(p => sumRows(rs.filter(r => r.pilar === p)).gp) }; }).sort((a, b) => b.t.gp - a.t.gp);
+  for (const c of S.cabangs) if (!cabs.some(x => x.c === c)) cabs.push({ c, t: withM(sumRows([])), p: pilars.map(() => 0) });
   const label = [D.cab || "Semua cabang", D.pilar].filter(Boolean).join(" · ");
   el.innerHTML = `<div style="display:grid;gap:14px">
   ${filterBar(true, allPilars)}
@@ -295,7 +296,7 @@ function kpiBand(kSewa, kMnt, mPil) {
   const sum = rs => rs.reduce((o, r) => (o.rev += +r.omzet, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.pel += +r.pelanggan, o), { rev: 0, gp: 0, inv: 0, unit: 0, pel: 0 });
   const a = sum(pick(kSewa)), b = sum(pick(kMnt));
   const satuBulan = /^\d{4}-\d{2}$/.test(D.bulan) && !D.cab;
-  const rank = (rs, f) => { if (!D.cab) return ""; const l = [...rs].sort((x, y) => f(y) - f(x)); const i = l.findIndex(r => r.cabang === D.cab); return i < 0 ? "" : ` · peringkat ${i + 1} dari ${l.length} cabang`; };
+  const rank = (rs, f) => { if (!D.cab) return ""; const l = lengkapiCabang(rs).map(r => ({ c: r.cabang, v: +f(r) || 0 })).sort((x, y) => y.v - x.v); const rk = peringkat(l); const i = l.findIndex(r => r.c === D.cab); return i < 0 ? "" : ` · peringkat ${rk[i]} dari ${l.length} cabang`; };
   const prog = (v, t, unit) => { const p = t ? v / t : 0; return `<div style="display:grid;gap:4px;margin-top:6px"><div style="height:8px;border-radius:999px;background:var(--line);overflow:hidden" role="img" aria-label="${Math.round(p * 100)}% dari target"><span style="display:block;height:100%;width:${Math.min(100, p * 100)}%;background:${p >= 1 ? "var(--ok)" : "var(--accent)"}"></span></div><span style="font-size:12px;color:var(--muted)"><b style="color:var(--ink)">${Math.round(p * 100)}%</b> dari target ${fmtN(t)} ${unit}/bulan${p < 1 ? ` · kurang ${fmtN(Math.max(0, t - v))}` : " · tercapai"}</span></div>`; };
   const box = (inner, goto) => `<div style="background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:var(--r);padding:14px 16px;display:grid;gap:4px;align-content:start;min-width:0">${inner}<button class="linkbtn" data-goto="${goto}" style="justify-self:start;margin-top:6px;font-size:12.5px">Buka tab ${goto === "sewa" ? "Sewa" : "Service & Maintenance Corporate"} →</button></div>`;
   const lab = t => `<span style="font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--accent)">KPI · ${t}</span>`;
@@ -345,7 +346,7 @@ async function pagePilar(el, key) {
   const s = rows.reduce((o, r) => (o.rev += +r.omzet, o.cost += +r.hpp, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.tc += +r.transaksi_corporate, o.pc += +r.pelanggan_corporate, o.pel += +r.pelanggan, o), { rev: 0, cost: 0, gp: 0, inv: 0, unit: 0, tc: 0, pc: 0, pel: 0 });
   s.m = s.rev ? s.gp / s.rev : 0;
   const label = (D.cab || "Semua cabang") + " · " + periodeLabel();
-  const sorted = [...rows].sort((a, b) => corp ? (b.pelanggan - a.pelanggan || b.gross_profit - a.gross_profit) : (b.unit - a.unit || b.gross_profit - a.gross_profit));
+  const sorted = [...(D.cab ? rows : lengkapiCabang(rows))].sort((a, b) => corp ? (b.pelanggan - a.pelanggan || b.gross_profit - a.gross_profit) : (b.unit - a.unit || b.gross_profit - a.gross_profit));
   el.innerHTML = `<div style="display:grid;gap:14px">
   <div class="toolbar" style="justify-content:space-between">${filterBar(false)}<button id="pDl">Unduh Excel rekonsiliasi</button></div>
   <p class="sub">Pilar: <b>${esc(pArr.join(", "))}</b>. ${esc(C.note)}</p>
@@ -407,12 +408,16 @@ function sendiriCard(rows, label) {
 }
 
 /* =================== bar per cabang (untuk dibagikan ke tim) =================== */
+// semua cabang selalu tampil; cabang tanpa transaksi diisi nol
+const ZERO_ROW = { omzet: 0, hpp: 0, gross_profit: 0, jumlah_faktur: 0, unit: 0, transaksi_corporate: 0, pelanggan_corporate: 0, pelanggan: 0 };
+const lengkapiCabang = rows => { const ada = new Set(rows.map(r => r.cabang)); return rows.concat(S.cabangs.filter(c => !ada.has(c)).map(c => ({ ...ZERO_ROW, cabang: c }))); };
+const peringkat = list => { let prev = null, rk = 0; return list.map((x, i) => { if (x.v !== prev) { rk = i + 1; prev = x.v; } return rk; }); };
 function barCabang(title, sub, rows, val, fmt) {
-  const list = rows.map(r => ({ c: r.cabang, v: +val(r) || 0 })).sort((a, b) => b.v - a.v || a.c.localeCompare(b.c));
-  const max = Math.max(0, ...list.map(x => x.v)), tot = list.reduce((a, x) => a + x.v, 0);
-  return `<div class="card"><h3>${esc(title)}</h3><p class="sub">${esc(sub)}</p>
-    <div class="hbars rank">${list.map((x, i) => `<div class="hbar"><div class="hbar-l"><span class="rk">${i + 1}</span>${esc(x.c)}</div><div class="hbar-t" role="img" aria-label="${esc(x.c)}: ${esc(fmt(x.v))}"><span style="width:${max > 0 ? Math.max(0, x.v) / max * 100 : 0}%"></span></div><div class="hbar-v">${esc(fmt(x.v))}<small>${tot ? Math.round(x.v / tot * 100) : 0}% dari total</small></div></div>`).join("") || `<p class="sub">Tidak ada data.</p>`}</div>
-    ${list.length ? `<p class="sub" style="margin-top:0">Total semua cabang: <b>${esc(fmt(tot))}</b>. Cabang yang belum muncul berarti belum ada data pada periode ini.</p>` : ""}</div>`;
+  const list = lengkapiCabang(rows).map(r => ({ c: r.cabang, v: +val(r) || 0 })).sort((a, b) => b.v - a.v || S.cabangs.indexOf(a.c) - S.cabangs.indexOf(b.c));
+  const max = Math.max(0, ...list.map(x => x.v)), tot = list.reduce((a, x) => a + x.v, 0), rk = peringkat(list), nol = list.filter(x => x.v <= 0).length;
+  return `<div class="card"><h3>${esc(title)}</h3><p class="sub">${esc(sub)} · ${fmtN(list.length)} cabang</p>
+    <div class="hbars rank">${list.map((x, i) => `<div class="hbar"${x.v <= 0 ? ' style="opacity:.75"' : ""}><div class="hbar-l"><span class="rk">${rk[i]}</span>${esc(x.c)}</div><div class="hbar-t" role="img" aria-label="${esc(x.c)}: ${esc(fmt(x.v))}"><span style="width:${max > 0 ? Math.max(0, x.v) / max * 100 : 0}%"></span></div><div class="hbar-v"${x.v <= 0 ? ' style="color:var(--bad)"' : ""}>${esc(fmt(x.v))}<small>${x.v <= 0 ? "belum ada pencapaian" : (tot ? Math.round(x.v / tot * 100) : 0) + "% dari total"}</small></div></div>`).join("") || `<p class="sub">Tidak ada data.</p>`}</div>
+    ${list.length ? `<p class="sub" style="margin-top:0">Total semua cabang: <b>${esc(fmt(tot))}</b>.${nol ? ` <b>${fmtN(nol)}</b> cabang belum ada pencapaian pada periode ini (belum ada transaksi atau datanya belum diunggah, cek menu Kualitas Data).` : ""}</p>` : ""}</div>`;
 }
 
 /* =================== grafik batang harian =================== */
