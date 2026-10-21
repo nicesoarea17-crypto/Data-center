@@ -78,6 +78,11 @@ Setiap kali file di GitHub diubah, Cloudflare akan memperbarui aplikasinya secar
 - **Tab Sewa:** GP pilar SEWA ditambah **jumlah unit (total QTY)** per cabang, per hari, dan per pelanggan, tabel biaya vendor & unit milik sendiri, serta **Unit milik sendiri yang tersewa** (nama barang dari Rincian Pemindahan Barang).
 - **Tab Service & Maintenance Corporate:** hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). GP pilar ini ditambah **corporate termaintenance** = jumlah pelanggan (perusahaan) yang bertransaksi di pilar ini; satu perusahaan dihitung satu walau punya beberapa transaksi.
 
+## Pencapaian Sales & insentif sewa
+Menu **Pencapaian Sales**: peringkat GP dan unit sewa per sales, plus laporan per sales (faktur, pelanggan, omzet, GP, unit sewa, GP maintenance, corporate maintenance, insentif). Ikut filter cabang, bulan, dan pilar. Nama sales bisa diambil dari kolom **Nama Default Penjual** atau **Yang Menyerahkan / Menjual** (pilihan di kanan atas). Nama ditulis huruf besar supaya ejaan berbeda huruf tidak terpisah.
+
+**Insentif sewa = unit tersewa (QTY pilar SEWA) × tarif per unit.** Tarif diisi di kotak "Pengali insentif" (menu Pencapaian Sales atau tab Sewa) lalu klik **Simpan tarif**; tarif tersimpan di database dan berlaku untuk semua pengguna. Bila PIN hapus dipasang, mengubah tarif juga wajib PIN. Tombol **Unduh Excel pencapaian** menghasilkan file berisi pencapaian per sales dan rincian insentif sewa.
+
 ## Unduh Laporan (rekonsiliasi dengan Accurate)
 Menu **Unduh Laporan** (atau tombol **Unduh Excel rekonsiliasi** di tab Sewa / Service & Maintenance Corporate): pilih laporan, cabang, dan bulan, lalu unduh. File Excel berisi sheet Keterangan, Ringkasan per Cabang, Rincian Faktur Penjualan per baris (dengan NO FAKTUR dan baris TOTAL), ditambah Pembelian SEWA & Biaya Vendor per Bulan untuk laporan Sewa, atau Daftar Corporate untuk laporan Maintenance. Cocokkan NO FAKTUR dan TOTAL HARGA dengan laporan Accurate pada filter yang sama.
 

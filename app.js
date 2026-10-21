@@ -153,6 +153,7 @@ const PAGES = [
   ["dashboard", "Dashboard Gross Profit"],
   ["sewa", "Sewa"],
   ["service", "Service & Maintenance Corporate"],
+  ["sales", "Pencapaian Sales"],
   ["pelanggan", "Data Pelanggan"],
   ["faktur", "Faktur Penjualan"],
   ["unggah", "Unggah Data"],
@@ -179,7 +180,7 @@ function go(p) {
   root().querySelectorAll("[data-page]").forEach(b => b.dataset.page === p ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   // wadah baru tiap pindah menu: halaman lama yang masih memuat tidak bisa menimpa halaman baru
   const el = document.createElement("div"); el.innerHTML = `<p class="loading">Memuat…</p>`; $("#page").replaceChildren(el);
-  ({ dashboard: pageDashboard, sewa: pageSewa, service: pageService, pelanggan: pagePelanggan, faktur: pageFaktur, unggah: pageUnggah, unduh: pageUnduh, kualitas: pageKualitas }[p])(el)
+  ({ dashboard: pageDashboard, sewa: pageSewa, service: pageService, sales: pageSales, pelanggan: pagePelanggan, faktur: pageFaktur, unggah: pageUnggah, unduh: pageUnduh, kualitas: pageKualitas }[p])(el)
     .catch(e => { el.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; });
 }
 function toast(t) { const d = document.createElement("div"); d.className = "notice ok"; d.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:20;box-shadow:0 6px 18px rgba(0,0,0,.15)"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 3500); }
@@ -338,7 +339,8 @@ async function pagePilar(el, key) {
   const adaPilar = [...new Set(known.map(r => r.pilar))];
   const cArgs = { ...args, p_cabang: D.cab || null, p_pilar: pArr };
   const corp = C.extra === "corporate";
-  const [vend, sendiri] = corp ? [[], []] : await Promise.all([db.rpc("sewa_vendor", args).catch(() => []), db.rpc("sewa_unit_sendiri", { ...args, p_cabang: D.cab || null }).catch(() => [])]);
+  const [vend, sendiri, salesSewa, ins, pinOn] = corp ? [[], [], [], null, false] : await Promise.all([db.rpc("sewa_vendor", args).catch(() => []), db.rpc("sewa_unit_sendiri", { ...args, p_cabang: D.cab || null }).catch(() => []),
+    db.rpc("pencapaian_sales", salesArgs(args, ["SEWA"])).catch(() => []), db.rpc("insentif_sewa").catch(() => ({ per_unit: 0 })), db.rpc("pin_aktif").catch(() => false)]);
   const [cab, days, kat, cust] = await Promise.all([
     db.rpc("pilar_cabang", { ...args, p_pilar: pArr }), db.rpc("gp_harian", cArgs), db.rpc("gp_kategori", cArgs),
     db.rpc("pilar_pelanggan", { ...cArgs, p_corporate: false, p_urut: corp ? "transaksi" : "unit", p_limit: 100 })]);
@@ -376,9 +378,11 @@ async function pagePilar(el, key) {
     ${cust.map(c => `<tr><td class="cab">${esc(c.cabang)}</td><td style="white-space:normal;min-width:180px">${esc(c.nama)}</td><td class="mono">${esc(c.id_pelanggan)}</td><td>${esc(c.kategori_pelanggan)}</td><td class="mono">${esc(c.no_wa)}</td>${corp ? "" : `<td class="num"><b>${fmtN(c.unit)}</b></td>`}<td class="num">${corp ? `<b>${fmtN(c.jumlah_faktur)}</b>` : fmtN(c.jumlah_faktur)}</td><td class="num">${rp(c.omzet)}</td><td class="num">${rp(c.gross_profit)}</td><td>${fmtDate(c.faktur_terakhir)}</td></tr>`).join("") || `<tr><td colspan="10" class="sub">Tidak ada data.</td></tr>`}</tbody></table></div></div>
   ${corp ? "" : vendorCard(D.cab ? vend.filter(v => v.cabang === D.cab) : vend)}
   ${corp ? "" : sendiriCard(sendiri, label)}
+  ${corp ? "" : `<div class="toolbar">${basisSelect()}</div>` + insentifCard(salesSewa, ins, pinOn, label)}
   ${katCard(kat, label, corp ? null : ["unit", "Unit"])}
   </div>`;
   const re = () => pagePilar(el, key);
+  if (!corp) { bindInsentif(el, pinOn, re); bindBasis(el, re); }
   $("#pDl", el).onclick = async () => { const b = $("#pDl", el); b.disabled = true; try { await unduhDenganProgres(key, D.cab || null, dari || null, sampai || null); } catch (e) {} b.disabled = false; };
   bindFilter(el, re);
   const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
@@ -405,6 +409,100 @@ function sendiriCard(rows, label) {
     ${top.length ? `<p class="sub" style="margin-top:0">Paling sering: ${top.map(([n, q]) => `${esc(n)} <b>(${fmtN(q)})</b>`).join(" · ")}</p>` : ""}
     <div class="tablebox" style="max-height:420px"><table><thead><tr><th>Cabang</th><th>Tanggal</th><th>Kode</th><th>Nama barang</th><th class="num">Qty</th><th>Gudang</th><th>Faktur sewa di hari yang sama</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td class="cab">${esc(r.cabang)}</td><td>${fmtDate(r.tanggal)}</td><td class="mono">${esc(r.kode_barang || "")}</td><td style="white-space:normal;min-width:220px"><b>${esc(r.nama_barang)}</b>${r.nomor ? `<br><span class="sub mono">${esc(r.nomor)}</span>` : ""}${r.keterangan ? `<br><span class="sub">${esc(r.keterangan)}</span>` : ""}</td><td class="num">${fmtN(r.qty)} ${esc(r.satuan || "")}</td><td>${esc(r.gudang || "")}</td><td style="white-space:normal;min-width:240px">${r.faktur_sewa_hari_itu ? esc(r.faktur_sewa_hari_itu).split("; ").join("<br>") : `<span class="pill warn">Belum ada faktur sewa di tanggal ini</span>`}</td></tr>`).join("") || `<tr><td colspan="7" class="sub">Belum ada data pemindahan ke/dari gudang sewa pada periode ini. Unggah file Rincian Pemindahan Barang di menu Unggah Data.</td></tr>`}</tbody></table></div></div>`;
+}
+
+/* =================== PENCAPAIAN SALES & INSENTIF SEWA =================== */
+let SB = LS.get("mfdc-basis") || "default";   // basis nama sales
+const BASIS = { default: "Nama Default Penjual", menjual: "Yang Menyerahkan / Menjual" };
+const salesArgs = (args, pilar) => ({ ...args, p_cabang: D.cab || null, p_pilar: pilar, p_basis: SB });
+function barList(title, sub, list, fmt, opt = {}) {
+  list = list.filter(x => opt.keepZero || x.v > 0).sort((a, b) => b.v - a.v || a.c.localeCompare(b.c));
+  const max = Math.max(0, ...list.map(x => x.v)), tot = list.reduce((a, x) => a + x.v, 0); const rk = peringkat(list);
+  return `<div class="card"><h3>${esc(title)}</h3><p class="sub">${esc(sub)} · ${fmtN(list.length)} sales</p>
+    <div class="hbars rank" style="max-height:${opt.maxH || 560}px;overflow:auto">${list.map((x, i) => `<div class="hbar"><div class="hbar-l"><span class="rk">${rk[i]}</span><span>${esc(x.c)}${x.sub ? `<br><small style="color:var(--muted);font-weight:500">${esc(x.sub)}</small>` : ""}</span></div><div class="hbar-t" role="img" aria-label="${esc(x.c)}: ${esc(fmt(x.v))}"><span style="width:${max > 0 ? Math.max(0, x.v) / max * 100 : 0}%"></span></div><div class="hbar-v">${esc(fmt(x.v))}${x.note ? `<small>${esc(x.note)}</small>` : `<small>${tot ? Math.round(x.v / tot * 100) : 0}% dari total</small>`}</div></div>`).join("") || `<p class="sub">Belum ada pencapaian pada filter ini.</p>`}</div>
+    ${list.length ? `<p class="sub" style="margin-top:0">Total: <b>${esc(fmt(tot))}</b></p>` : ""}</div>`;
+}
+function insentifCard(rows, ins, pinOn, label) {
+  const tarif = +ins.per_unit || 0;
+  const list = rows.filter(r => +r.unit_sewa > 0).map(r => ({ ...r, ins: +r.unit_sewa * tarif })).sort((a, b) => b.unit_sewa - a.unit_sewa || b.gp_sewa - a.gp_sewa);
+  const t = list.reduce((o, r) => (o.u += +r.unit_sewa, o.f += +r.faktur_sewa, o.o += +r.omzet_sewa, o.g += +r.gp_sewa, o.i += r.ins, o), { u: 0, f: 0, o: 0, g: 0, i: 0 });
+  return `<div class="card" id="insCard"><h3>Insentif sewa per sales <span class="pill ok">${rp(t.i)}</span></h3>
+    <p class="sub">${esc(label)} · Insentif = unit tersewa (QTY pilar SEWA) × tarif per unit. Nama sales dari kolom <b>${esc(BASIS[SB])}</b>.</p>
+    <div class="toolbar" style="align-items:end;background:var(--accent-soft);border-radius:var(--r);padding:10px 12px">
+      <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Pengali insentif (Rp per unit)<input id="insVal" inputmode="numeric" value="${fmtN(tarif)}" style="width:170px;font-weight:700"></label>
+      ${pinOn ? `<label style="display:grid;gap:4px;font-weight:600;font-size:13px">PIN<input id="insPin" type="password" autocomplete="off" style="width:110px"></label>` : ""}
+      <button class="primary" id="insSave">Simpan tarif</button>
+      <span class="sub" id="insMsg" role="status">${ins.diubah_pada ? `Terakhir diubah ${esc(ins.diubah_pada)}${ins.diubah_oleh ? " oleh " + esc(ins.diubah_oleh) : ""}.` : "Tarif belum diatur."} Tarif berlaku untuk semua orang yang membuka aplikasi.</span>
+    </div>
+    ${tarif ? "" : `<div class="notice warn">Isi pengali insentif per unit dulu, lalu klik Simpan tarif.</div>`}
+    ${barList("Pencapaian insentif sewa", label + " · " + rp(tarif) + " per unit", list.map(r => ({ c: r.sales, v: r.ins, sub: r.cabang, note: fmtN(r.unit_sewa) + " unit × " + rp(tarif) })), rp, { maxH: 420 })}
+    <div class="tablebox" style="max-height:420px"><table><thead><tr><th>Sales</th><th>Cabang</th><th class="num">Unit tersewa</th><th class="num">Faktur sewa</th><th class="num">Omzet sewa</th><th class="num">GP sewa</th><th class="num">Insentif</th></tr></thead><tbody>
+    ${list.map(r => `<tr><td class="cab">${esc(r.sales)}</td><td>${esc(r.cabang)}</td><td class="num"><b>${fmtN(r.unit_sewa)}</b></td><td class="num">${fmtN(r.faktur_sewa)}</td><td class="num">${rp(r.omzet_sewa)}</td><td class="num">${rp(r.gp_sewa)}</td><td class="num"><b>${rp(r.ins)}</b></td></tr>`).join("") || `<tr><td colspan="7" class="sub">Belum ada penjualan pilar SEWA pada filter ini.</td></tr>`}
+    ${list.length > 1 ? `<tr class="tot"><td colspan="2">TOTAL</td><td class="num">${fmtN(t.u)}</td><td class="num">${fmtN(t.f)}</td><td class="num">${rp(t.o)}</td><td class="num">${rp(t.g)}</td><td class="num">${rp(t.i)}</td></tr>` : ""}</tbody></table></div></div>`;
+}
+function bindInsentif(el, pinOn, re) {
+  const b = $("#insSave", el); if (!b) return;
+  const inp = $("#insVal", el); inp.oninput = () => { const n = inp.value.replace(/\D/g, ""); inp.value = n ? fmtN(+n) : ""; };
+  b.onclick = async () => {
+    const v = +inp.value.replace(/\D/g, ""); if (!inp.value.trim()) { $("#insMsg", el).textContent = "Isi tarif per unit."; return; }
+    b.disabled = true; $("#insMsg", el).textContent = "Menyimpan…";
+    try { await db.rpc("set_insentif_sewa", { p_per_unit: v, p_oleh: uploader() || null, p_pin: pinOn ? $("#insPin", el).value : null }); toast(`Tarif insentif sewa disimpan: ${rp(v)} per unit.`); re(); }
+    catch (e) { $("#insMsg", el).textContent = "Gagal: " + e.message; b.disabled = false; }
+  };
+}
+const basisSelect = () => `<label class="sub" style="display:flex;gap:6px;align-items:center">Nama sales dari<select id="fBasis" aria-label="Basis nama sales">${Object.entries(BASIS).map(([k, v]) => `<option value="${k}"${k === SB ? " selected" : ""}>${v}</option>`).join("")}</select></label>`;
+const bindBasis = (el, re) => { const x = $("#fBasis", el); if (x) x.onchange = e => { SB = e.target.value; LS.set("mfdc-basis", SB); re(); }; };
+async function pageSales(el) {
+  await loadBulan();
+  const [dari, sampai] = periode();
+  const args = { p_dari: dari || null, p_sampai: sampai || null };
+  const pil = D.pilar ? [D.pilar] : null;
+  const [known, rows, rowsAll, ins, pinOn] = await Promise.all([
+    db.rpc("gp_cabang_pilar", { p_dari: null, p_sampai: null }),
+    db.rpc("pencapaian_sales", salesArgs(args, pil)),
+    pil ? db.rpc("pencapaian_sales", salesArgs(args, null)) : null,
+    db.rpc("insentif_sewa").catch(() => ({ per_unit: 0 })), db.rpc("pin_aktif").catch(() => false)]);
+  const allPilars = sortPilar([...new Set(known.map(r => r.pilar))]);
+  const tarif = +ins.per_unit || 0;
+  const sewaRows = rowsAll || rows;
+  const insBy = new Map(sewaRows.map(r => [r.sales, +r.unit_sewa * tarif]));
+  const T = rows.reduce((o, r) => (o.rev += +r.omzet, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.pel += +r.pelanggan, o), { rev: 0, gp: 0, inv: 0, pel: 0 });
+  const sorted = [...rows].sort((a, b) => b.gross_profit - a.gross_profit);
+  const named = sorted.filter(r => r.sales !== "TANPA NAMA SALES");
+  const label = [D.cab || "Semua cabang", D.pilar, periodeLabel()].filter(Boolean).join(" · ");
+  el.innerHTML = `<div style="display:grid;gap:14px">
+  <div class="toolbar" style="justify-content:space-between">${filterBar(true, allPilars)}<div class="toolbar">${basisSelect()}<button id="sDl">Unduh Excel pencapaian</button></div></div>
+  ${!rows.length ? `<div class="notice warn">Belum ada faktur pada filter ini.${D.bulan !== "semua" ? ` <button class="linkbtn" id="dAll">Lihat semua periode</button>` : ""}</div>` : ""}
+  <div class="gp-hero">
+    <div class="gp-main"><span class="l">Gross profit · ${esc(label)}</span><span class="v">${rp(T.gp)}</span><span class="s">dari ${fmtN(named.length)} sales · omzet ${rp(T.rev)}</span></div>
+    <div class="kpi"><span class="l">Sales terbaik (GP)</span><span class="v" style="font-size:16px">${esc(named[0]?.sales || "–")}</span><span class="s">${named[0] ? rp(named[0].gross_profit) : ""}</span></div>
+    <div class="kpi"><span class="l">Unit sewa</span><span class="v">${fmtN(sewaRows.reduce((a, r) => a + +r.unit_sewa, 0))} <small style="font-size:13px;font-weight:600">unit</small></span><span class="s">insentif ${rp([...insBy.values()].reduce((a, v) => a + v, 0))}</span></div>
+    <div class="kpi"><span class="l">GP rata-rata per sales</span><span class="v">${rpShort(named.length ? named.reduce((a, r) => a + +r.gross_profit, 0) / named.length : 0)}</span><span class="s">${fmtN(T.inv)} faktur</span></div>
+  </div>
+  <div class="gp-grid">
+    ${barList("Gross profit per sales", label, named.map(r => ({ c: r.sales, v: +r.gross_profit, sub: r.cabang })), rp)}
+    ${barList("Unit sewa per sales", [D.cab || "Semua cabang", periodeLabel()].join(" · ") + " · pilar SEWA", sewaRows.filter(r => r.sales !== "TANPA NAMA SALES").map(r => ({ c: r.sales, v: +r.unit_sewa, sub: r.cabang })), v => fmtN(v) + " unit")}
+  </div>
+  ${insentifCard(sewaRows, ins, pinOn, [D.cab || "Semua cabang", periodeLabel()].join(" · "))}
+  <div class="card"><h3>Laporan pencapaian per sales</h3><p class="sub">${esc(label)} · nama sales dari kolom ${esc(BASIS[SB])}. Satu sales yang melayani di beberapa cabang digabung.</p>
+    <div class="tablebox" style="max-height:560px"><table><thead><tr><th>#</th><th>Sales</th><th>Cabang</th><th class="num">Faktur</th><th class="num">Pelanggan</th><th class="num">Omzet</th><th class="num">HPP</th><th class="num">Gross profit</th><th class="num">Margin</th><th class="num">Unit sewa</th><th class="num">GP Maintenance</th><th class="num">Corporate maint.</th><th class="num">Insentif sewa</th></tr></thead><tbody>
+    ${sorted.map((r, i) => `<tr><td class="num">${i + 1}</td><td class="cab">${esc(r.sales)}</td><td style="white-space:normal;min-width:120px">${esc(r.cabang)}</td><td class="num">${fmtN(r.jumlah_faktur)}</td><td class="num">${fmtN(r.pelanggan)}</td><td class="num">${rp(r.omzet)}</td><td class="num">${rp(r.hpp)}</td><td class="num"><b>${rp(r.gross_profit)}</b></td><td class="num">${mPill(+r.omzet ? r.gross_profit / r.omzet : 0, +r.omzet)}</td><td class="num">${fmtN(r.unit_sewa)}</td><td class="num">${rp(r.gp_maintenance)}</td><td class="num">${fmtN(r.corporate_maintenance)}</td><td class="num">${rp(insBy.get(r.sales) || 0)}</td></tr>`).join("") || `<tr><td colspan="13" class="sub">Tidak ada data.</td></tr>`}
+    ${sorted.length > 1 ? `<tr class="tot"><td></td><td colspan="2">TOTAL</td><td class="num">${fmtN(T.inv)}</td><td class="num">${fmtN(T.pel)}</td><td class="num">${rp(T.rev)}</td><td class="num">${rp(rows.reduce((a, r) => a + +r.hpp, 0))}</td><td class="num">${rp(T.gp)}</td><td class="num">${mPill(T.rev ? T.gp / T.rev : 0, T.rev)}</td><td class="num">${fmtN(rows.reduce((a, r) => a + +r.unit_sewa, 0))}</td><td class="num">${rp(rows.reduce((a, r) => a + +r.gp_maintenance, 0))}</td><td class="num">${fmtN(rows.reduce((a, r) => a + +r.corporate_maintenance, 0))}</td><td class="num">${rp([...insBy.values()].reduce((a, v) => a + v, 0))}</td></tr>` : ""}</tbody></table></div>
+    ${rows.some(r => r.sales === "TANPA NAMA SALES") ? `<p class="sub">"TANPA NAMA SALES" = faktur yang kolom penjualnya kosong di Accurate.</p>` : ""}</div>
+  </div>`;
+  const re = () => pageSales(el);
+  bindFilter(el, re); bindBasis(el, re); bindInsentif(el, pinOn, re);
+  const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
+  $("#sDl", el).onclick = () => {
+    const wb = XLSX.utils.book_new();
+    const info = [["Laporan", "Pencapaian per Sales"], ["Filter", label], ["Nama sales dari", BASIS[SB]], ["Tarif insentif sewa", tarif], ["Rumus insentif", "Unit tersewa (QTY pilar SEWA) × tarif per unit"], ["Dibuat", fmtDateTime(new Date())]];
+    const ws0 = XLSX.utils.aoa_to_sheet(info); ws0["!cols"] = [{ wch: 22 }, { wch: 70 }]; XLSX.utils.book_append_sheet(wb, ws0, "Keterangan");
+    const ws1 = XLSX.utils.json_to_sheet(sorted.map((r, i) => ({ "PERINGKAT": i + 1, "SALES": r.sales, "CABANG": r.cabang, "FAKTUR": +r.jumlah_faktur, "PELANGGAN": +r.pelanggan, "OMZET": +r.omzet, "HPP": +r.hpp, "GROSS PROFIT": +r.gross_profit, "UNIT SEWA": +r.unit_sewa, "GP MAINTENANCE": +r.gp_maintenance, "CORPORATE MAINTENANCE": +r.corporate_maintenance, "INSENTIF SEWA": insBy.get(r.sales) || 0 })));
+    ws1["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 24 }, ...Array(9).fill({ wch: 16 })]; XLSX.utils.book_append_sheet(wb, ws1, "Pencapaian Sales");
+    const ws2 = XLSX.utils.json_to_sheet(sewaRows.filter(r => +r.unit_sewa > 0).sort((a, b) => b.unit_sewa - a.unit_sewa).map(r => ({ "SALES": r.sales, "CABANG": r.cabang, "UNIT TERSEWA": +r.unit_sewa, "FAKTUR SEWA": +r.faktur_sewa, "OMZET SEWA": +r.omzet_sewa, "GP SEWA": +r.gp_sewa, "TARIF PER UNIT": tarif, "INSENTIF": +r.unit_sewa * tarif })));
+    ws2["!cols"] = [{ wch: 28 }, { wch: 24 }, ...Array(6).fill({ wch: 16 })]; XLSX.utils.book_append_sheet(wb, ws2, "Insentif Sewa");
+    saveWb(wb, `MFlash-Pencapaian-Sales-${(dari || "awal").replace(/-/g, "")}-${(sampai || "akhir").replace(/-/g, "")}.xlsx`);
+  };
 }
 
 /* =================== bar per cabang (untuk dibagikan ke tim) =================== */
