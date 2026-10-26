@@ -553,7 +553,7 @@ async function resolvePilar(key) {
   const C = PILAR_TABS[key]; const pil = all.filter(C.match);
   return { pil: pil.length ? pil : (key === "sewa" ? ["SEWA"] : ["SERVICE & MAINTENANCE CORPORATE"]), all };
 }
-const REK_COLS = [["cabang", "CABANG"], ["tgl_faktur", "TGL FAKTUR"], ["no_faktur", "NO FAKTUR"], ["baris", "BARIS KE"], ["id_pelanggan", "ID PELANGGAN"], ["nama_customer", "NAMA CUSTOMER"], ["kategori_pelanggan", "KATEGORI PELANGGAN"], ["pilar", "PILAR"], ["kategori_penjualan", "KATEGORI PENJUALAN"], ["kategori_barang", "KATEGORI BARANG"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "QTY"], ["harga_satuan", "@HARGA"], ["total_harga", "TOTAL HARGA"], ["harga_beli", "HARGA BELI (ACCURATE)"], ["biaya_vendor", "BIAYA SEWA VENDOR"], ["hpp", "HPP TOTAL"], ["gross_profit", "GROSS PROFIT"], ["penjual_default", "PENJUAL DEFAULT"], ["nama_admin", "NAMA ADMIN"], ["no_wa", "NO WA"]];
+const REK_COLS = [["cabang", "CABANG"], ["tgl_faktur", "TGL FAKTUR"], ["no_faktur", "NO FAKTUR"], ["baris", "BARIS KE"], ["id_pelanggan", "ID PELANGGAN"], ["nama_customer", "NAMA CUSTOMER"], ["kategori_pelanggan", "KATEGORI PELANGGAN"], ["pilar", "PILAR"], ["kategori_penjualan", "KATEGORI PENJUALAN"], ["kategori_barang", "KATEGORI BARANG"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "QTY"], ["harga_satuan", "@HARGA"], ["total_harga", "TOTAL HARGA"], ["harga_beli", "HARGA BELI (ACCURATE)"], ["biaya_vendor", "BIAYA SEWA VENDOR"], ["hpp", "HPP TOTAL"], ["gross_profit", "GROSS PROFIT"], ["penjual_default", "PENJUAL DEFAULT"], ["nama_admin", "NAMA ADMIN"], ["no_wa", "NO WA"], ["sumber", "SUMBER DATA"]];
 const SUM_KEYS = ["qty", "total_harga", "harga_beli", "biaya_vendor", "hpp", "gross_profit"];
 function sheetRows(rows, cols, totalLabel) {
   const out = rows.map(r => Object.fromEntries(cols.map(([k, h]) => [h, isEmpty(r[k]) ? null : (typeof r[k] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r[k]) ? toCell(r[k]) : (["qty", "harga_satuan", "total_harga", "harga_beli", "biaya_vendor", "hpp", "gross_profit", "total"].includes(k) ? +r[k] : r[k]))])));
@@ -651,9 +651,9 @@ const TABLES = {
   },
   faktur: {
     view: "v_faktur", title: "Faktur Penjualan",
-    cols: [["cabang", "Cabang"], ["tgl_faktur", "Tgl faktur", "date"], ["no_faktur", "No faktur"], ["id_pelanggan", "ID Pelanggan"], ["nama_customer", "Nama customer"], ["no_wa", "No WA"], ["kategori_pelanggan", "Kategori pelanggan"], ["pilar", "Pilar"], ["kategori_penjualan", "Kategori penjualan"], ["kategori_barang", "Kategori barang"], ["nama_barang", "Nama barang"], ["merk_unit", "Merk"], ["tipe_unit", "Tipe"], ["qty", "Qty", "num"], ["total_harga", "Total harga", "rp"], ["harga_beli", "Harga beli", "rp"], ["biaya_vendor", "Biaya sewa vendor", "rp"], ["gross_profit", "Gross profit", "rp"], ["penjual_default", "Penjual default"], ["kecamatan", "Kecamatan"], ["kota", "Kota"], ["status_pelanggan", "Status pelanggan"], ["dilengkapi", "Dilengkapi dari pelanggan"]],
+    cols: [["cabang", "Cabang"], ["tgl_faktur", "Tgl faktur", "date"], ["no_faktur", "No faktur"], ["id_pelanggan", "ID Pelanggan"], ["nama_customer", "Nama customer"], ["no_wa", "No WA"], ["kategori_pelanggan", "Kategori pelanggan"], ["pilar", "Pilar"], ["kategori_penjualan", "Kategori penjualan"], ["kategori_barang", "Kategori barang"], ["nama_barang", "Nama barang"], ["merk_unit", "Merk"], ["tipe_unit", "Tipe"], ["qty", "Qty", "num"], ["total_harga", "Total harga", "rp"], ["harga_beli", "Harga beli", "rp"], ["biaya_vendor", "Biaya sewa vendor", "rp"], ["gross_profit", "Gross profit", "rp"], ["penjual_default", "Penjual default"], ["kecamatan", "Kecamatan"], ["kota", "Kota"], ["status_pelanggan", "Status pelanggan"], ["dilengkapi", "Dilengkapi dari pelanggan"], ["sumber", "Sumber data"]],
     search: q => `no_faktur.ilike."*${q}*",nama_customer.ilike."*${q}*",id_pelanggan.ilike."*${q}*",nama_barang.ilike."*${q}*",no_wa.ilike."*${q}*"`,
-    chips: [["wa", "Dapat No WA", ["no_wa", "not.is", "null"]], ["unmatched", "Pelanggan tidak ditemukan", ["status_pelanggan", "neq", "Cocok"]], ["rugi", "Rugi (GP minus)", ["gross_profit", "lt", "0"]], ["fill", "Dilengkapi dari pelanggan", ["dilengkapi", "not.is", "null"]]],
+    chips: [["wa", "Dapat No WA", ["no_wa", "not.is", "null"]], ["unmatched", "Pelanggan tidak ditemukan", ["status_pelanggan", "neq", "Cocok"]], ["rugi", "Rugi (GP minus)", ["gross_profit", "lt", "0"]], ["fill", "Dilengkapi dari pelanggan", ["dilengkapi", "not.is", "null"]], ["hub", "Dari hub (belum diunggah Excel)", ["sumber", "eq", "Hub"]]],
     order: "tgl_faktur.desc.nullslast,cabang.asc,no_faktur.desc,baris.asc", dateCol: "tgl_faktur",
     fillMark: { nama_customer: "Nama", kategori_pelanggan: "Kategori Pelanggan", penjual_default: "Penjual Default", no_wa: "No WA", kecamatan: "*", kota: "*" }
   }
@@ -930,6 +930,7 @@ async function pageUnggah(el) {
   const [{ rows: hist }, pinOn, stat] = await Promise.all([
     db.select("uploads", { select: "id,cabang,jenis,nama_file,jumlah_baris,periode_dari,periode_sampai,diunggah_nama,diunggah_pada", order: "diunggah_pada.desc", limit: 50 }),
     db.rpc("pin_aktif").catch(() => false), db.rpc("kualitas_data").catch(() => [])]);
+  const hub = await db.rpc("hub_status").catch(() => null);
   const histHtml = `<section class="panel"><h2>Riwayat unggah</h2>
     <p class="sub">Tombol <b>Hapus</b> menghapus data yang berasal dari unggahan itu. Pelanggan yang sudah diperbarui oleh unggahan lain yang lebih baru tidak ikut terhapus.</p>
     <div class="tablebox"><table><thead><tr><th>Waktu</th><th>Cabang</th><th>Jenis</th><th>File</th><th class="num">Baris</th><th>Periode faktur</th><th>Oleh</th><th></th></tr></thead><tbody>
@@ -956,6 +957,7 @@ async function pageUnggah(el) {
     <div class="toolbar"><button class="danger" id="hBtn" disabled>Hapus data</button><span class="sub" id="hMsg" role="status"></span></div>
     ${pinOn ? "" : `<p class="sub">Belum ada PIN hapus, jadi siapa pun yang membuka aplikasi bisa menghapus data. Cara memasang PIN ada di README (bagian Hapus / Reset).</p>`}
   </section>`}
+  ${U_TAB === "unggah" ? hubCard(hub) : ""}
   ${histHtml}</div>`;
   el.querySelectorAll("[data-ut]").forEach(b => b.onclick = () => { U_TAB = b.dataset.ut; pageUnggah(el); });
   el.querySelectorAll("[data-delup]").forEach(b => b.onclick = async () => {
@@ -1076,10 +1078,27 @@ async function uploadAll() {
   if (UP.some(f => f.status === "selesai")) { BULAN = null; toast("Unggah selesai. Dashboard sudah memakai data baru."); if (S.page === "unggah") go("unggah"); }
 }
 
+/* =================== TARIKAN OTOMATIS HUB =================== */
+function hubCard(h) {
+  if (!h) return "";
+  const log = h.log || [], per = h.per_cabang || [], last = log[0];
+  const okLast = log.find(l => l.ok);
+  const lama = okLast ? (Date.now() - new Date(okLast.waktu).getTime()) / 864e5 : null;
+  const pill = !log.length ? `<span class="pill warn">Belum pernah jalan</span>` : last.ok && lama < 2 ? `<span class="pill ok">Berjalan</span>` : `<span class="pill bad">Perlu dicek</span>`;
+  return `<section class="panel"><h2>Tarikan otomatis dari hub MFlash ${pill}</h2>
+    <p class="sub">Faktur ditarik otomatis setiap hari 03.15 WIB (satu baris per faktur). Faktur yang <b>belum diunggah lewat Excel</b> tetap tampil di dashboard dari data hub, ditandai Sumber data = Hub. Begitu Excel cabang itu diunggah, baris rinci dari Excel yang dipakai (nama barang, QTY, pelanggan).</p>
+    ${last ? `<p class="sub">Terakhir: <b>${fmtDateTime(last.waktu)}</b> · ${last.ok ? `${fmtN(last.jml)} faktur (${fmtDate(last.dari)} – ${fmtDate(last.sampai)})${last.dihapus ? `, ${fmtN(last.dihapus)} dihapus karena sudah tidak ada di Accurate` : ""}` : `<span style="color:var(--bad)">gagal: ${esc(last.pesan || "")}</span>`}${last.tgl_data_terakhir ? ` · data hub sampai ${esc(last.tgl_data_terakhir)}` : ""}${lama != null && lama >= 2 ? ` · <b style="color:var(--bad)">tarikan berhasil terakhir ${Math.floor(lama)} hari lalu</b>` : ""}</p>` : `<p class="sub">Belum ada tarikan. Pasang Edge Function <span class="mono">tarik-mflash</span> dan jadwalnya (lihat README bagian Tarikan otomatis).</p>`}
+    ${(h.cabang_tak_dikenal || []).length ? `<div class="notice warn">Nama cabang dari hub yang tidak cocok dengan daftar cabang aplikasi: <b>${esc(h.cabang_tak_dikenal.join(", "))}</b>. Fakturnya belum dipakai di dashboard.</div>` : ""}
+    ${per.length ? `<div class="tablebox"><table><thead><tr><th>Cabang</th><th class="num">Faktur di hub</th><th>Periode</th><th class="num">Nilai</th><th class="num">Belum ada di Excel</th><th>Diperbarui</th></tr></thead><tbody>
+      ${per.map(r => `<tr><td class="cab">${esc(r.cabang)}</td><td class="num">${fmtN(r.faktur_hub)}</td><td>${fmtDate(r.dari)} – ${fmtDate(r.sampai)}</td><td class="num">${rp(r.nilai_hub)}</td><td class="num">${+r.belum_diunggah ? `<span class="pill warn">${fmtN(r.belum_diunggah)}</span>` : `<span class="pill ok">0</span>`}</td><td>${fmtDateTime(r.diperbarui)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+  </section>`;
+}
+
 /* =================== KUALITAS DATA =================== */
 async function pageKualitas(el) {
-  const rows = await db.rpc("kualitas_data");
+  const [rows, hub] = await Promise.all([db.rpc("kualitas_data"), db.rpc("hub_status").catch(() => null)]);
   const issues = [];
+  for (const r of (hub?.per_cabang || [])) if (+r.belum_diunggah) issues.push(["warn", `${r.cabang}: ${fmtN(r.belum_diunggah)} faktur dari hub belum ada di unggahan Excel`, `Faktur ini sudah ikut dashboard dari data hub (omzet, harga beli, pilar, sales), tetapi tanpa nama barang, QTY per barang, dan data pelanggan. Unggah Rincian Faktur Penjualan cabang ini untuk rinciannya.`]);
   for (const s of rows) {
     const pel = +s.pelanggan, wa = +s.punya_wa, raw = +s.telp_bukan_nomor, top = (s.contoh_isi_telp || []).map(x => `${x.isi} (${fmtN(x.jumlah)})`).join(", ");
     if (pel) {
@@ -1104,6 +1123,7 @@ async function pageKualitas(el) {
   ${rows.map(s => `<tr><td class="cab">${esc(s.cabang)}</td><td class="num">${fmtN(s.pelanggan)}</td><td class="num">${fmtN(s.punya_wa)} <span class="pill ${+s.pelanggan ? (s.punya_wa / s.pelanggan > .7 ? "ok" : +s.punya_wa ? "warn" : "bad") : "warn"}">${+s.pelanggan ? pct(s.punya_wa / s.pelanggan) : "–"}</span></td><td class="num">${fmtN(s.jumlah_faktur)}</td><td class="num">${fmtN(s.baris_faktur)}</td><td>${s.faktur_dari ? fmtDate(s.faktur_dari) + " – " + fmtDate(s.faktur_sampai) : "–"}</td><td class="num">${+s.faktur_tidak_cocok ? `<span class="pill bad">${fmtN(s.faktur_tidak_cocok)}</span>` : "0"}</td><td>${fmtDateTime(s.unggah_pelanggan_terakhir) || "–"}</td><td>${fmtDateTime(s.unggah_faktur_terakhir) || "–"}</td></tr>`).join("") || `<tr><td colspan="9" class="sub">Belum ada data.</td></tr>`}
   </tbody></table></div>
   ${lockedCabang() ? "" : `<p class="sub">Cabang yang belum mengunggah: ${esc(S.cabangs.filter(c => !rows.some(r => r.cabang === c)).join(", ") || "tidak ada")}.</p>`}</section>
+  ${hubCard(hub)}
   <section class="issues">${issues.map(([l, t, d]) => `<div class="issue ${l === "bad" ? "bad" : l === "ok" ? "ok" : ""}"><h3><span class="pill ${l === "bad" ? "bad" : l === "ok" ? "ok" : "warn"}">${l === "bad" ? "Perlu dibenahi" : l === "ok" ? "Baik" : "Perhatikan"}</span> ${esc(t)}</h3><p>${esc(d)}</p></div>`).join("")}</section></div>`;
 }
 
