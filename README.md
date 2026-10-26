@@ -99,6 +99,21 @@ on conflict (kunci) do update set nilai = excluded.nilai;
 ```
 Setelah dipasang, penghapusan wajib memasukkan PIN. Untuk mematikan PIN: `delete from public.app_setting where kunci = 'pin_hapus';`
 
+## Tarikan otomatis dari hub MFlash (pelengkap unggah Excel)
+Setiap hari 03.15 WIB, Edge Function **tarik-mflash** menarik faktur penjualan semua cabang dari hub MFlash (satu baris per faktur: tanggal, cabang, kategori, pilar, sales, teknisi, harga beli, total) ke tabel `hub_faktur`. Tiga hari terakhir selalu ditarik ulang, jadi koreksi/hapus faktur di Accurate ikut terbawa.
+- Faktur yang **belum diunggah lewat Excel** langsung ikut dashboard (GP, pilar, unit sewa, pencapaian sales) dengan **Sumber data = Hub**.
+- Begitu Excel Rincian Faktur Penjualan cabang itu diunggah, baris rinci dari Excel yang dipakai (nama barang, QTY per barang, ID pelanggan, No WA). Jadi unggah Excel tetap perlu untuk detail, tetapi dashboard tidak lagi menunggu unggahan.
+- Status tarikan dan jumlah faktur yang belum ada di Excel tampil di **Unggah Data** dan **Kualitas Data**. Di **Faktur Penjualan** ada filter "Dari hub (belum diunggah Excel)".
+
+**Pemasangan (sekali):**
+1. Jalankan `supabase/schema.sql` terbaru (membuat tabel `hub_faktur`, `hub_log`, dan menyambungkannya ke dashboard).
+2. Supabase → **Edge Functions → Secrets**: tambah `MFLASH_KUNCI` = kunci akses dari MFlash. Jangan tulis kunci di kode atau di chat.
+3. Supabase → **Edge Functions → Deploy a new function → Via Editor**: nama `tarik-mflash`, tempel isi `supabase/functions/tarik-mflash/index.ts`, Deploy. (Atau lewat CLI: `supabase functions deploy tarik-mflash`.)
+4. Buka `supabase/jadwal-tarik-mflash.sql`, isi alamat project & anon key, jalankan di SQL Editor. Langkah 3 di file itu langsung menjalankan uji pertama.
+5. Buka aplikasi → Unggah Data: kotak "Tarikan otomatis dari hub MFlash" harus berstatus **Berjalan** dengan jumlah faktur masuk akal.
+
+Bila project memakai kunci publik format baru (`sb_publishable_...`), deploy fungsi dengan opsi **Verify JWT dimatikan**. Kalau ada nama cabang hub yang tidak cocok, aplikasi menampilkannya di kotak status; tambahkan/ubah nama cabang di tabel `cabang`.
+
 ## Cara kerja data
 - **Kolom CABANG** selalu menjadi kolom pertama. Cabang dikenali dari nama file Accurate (misal `003mflashbintar` → Bintara) dan bisa diubah sebelum diunggah.
 - **Pelanggan** dicocokkan dengan **Cabang + ID Pelanggan**, karena ID yang sama bisa dipakai cabang lain untuk orang berbeda. Unggah ulang akan memperbarui data pelanggan yang sudah ada.
