@@ -105,6 +105,8 @@ Setiap hari 03.15 WIB, Edge Function **tarik-mflash** menarik faktur penjualan s
 - Begitu Excel Rincian Faktur Penjualan cabang itu diunggah, baris rinci dari Excel yang dipakai (nama barang, QTY per barang, ID pelanggan, No WA). Jadi unggah Excel tetap perlu untuk detail, tetapi dashboard tidak lagi menunggu unggahan.
 - Status tarikan dan jumlah faktur yang belum ada di Excel tampil di **Unggah Data** dan **Kualitas Data**. Di **Faktur Penjualan** ada filter "Dari hub (belum diunggah Excel)".
 
+Selain faktur penjualan, fungsi yang sama juga menarik **Faktur Pembelian** (untuk biaya sewa vendor) dan **Pemindahan Barang** (unit milik sendiri). Aturannya sama: unggahan Excel dipakai lebih dulu, data hub mengisi yang belum diunggah (pembelian per nomor faktur pembelian, pemindahan per cabang + tanggal). Dari hub, arah pindah diketahui: hanya pemindahan **ke** gudang sewa yang dihitung sebagai unit milik sendiri yang tersewa; pemindahan **kembali dari** gudang sewa tidak dihitung.
+
 **Pemasangan (sekali):**
 1. Jalankan `supabase/schema.sql` terbaru (membuat tabel `hub_faktur`, `hub_log`, dan menyambungkannya ke dashboard).
 2. Supabase → **Edge Functions → Secrets**: tambah `MFLASH_KUNCI` = kunci akses dari MFlash. Jangan tulis kunci di kode atau di chat.
