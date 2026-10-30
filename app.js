@@ -293,6 +293,7 @@ async function pageDashboard(el) {
 /* KPI utama: unit tersewa & GP Service & Maintenance Corporate (ikut filter cabang & bulan, tidak ikut filter pilar) */
 const KPI_TARGET = { unit: 918, corporate: 162 };   // target per bulan, untuk semua cabang
 function kpiBand(kSewa, kMnt, mPil) {
+  kMnt = kMnt.map(r => ({ ...r, pelanggan: r.pelanggan_corporate }));   // hanya kategori pelanggan CORPORATE
   const pick = rs => D.cab ? rs.filter(r => r.cabang === D.cab) : rs;
   const sum = rs => rs.reduce((o, r) => (o.rev += +r.omzet, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.pel += +r.pelanggan, o), { rev: 0, gp: 0, inv: 0, unit: 0, pel: 0 });
   const a = sum(pick(kSewa)), b = sum(pick(kMnt));
@@ -324,7 +325,7 @@ const PILAR_TABS = {
   sewa: { title: "Sewa", match: p => p === "SEWA", extra: "unit",
     note: "Jumlah unit = total QTY pada baris faktur pilar SEWA." },
   service: { title: "Service & Maintenance Corporate", match: p => /MAINTENANCE/.test(p), extra: "corporate",
-    note: "Hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). Corporate termaintenance = jumlah pelanggan (perusahaan) yang bertransaksi; satu perusahaan dihitung satu walau punya beberapa transaksi." }
+    note: "Hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). Corporate termaintenance = jumlah pelanggan berkategori CORPORATE yang bertransaksi; satu perusahaan dihitung satu walau punya beberapa transaksi." }
 };
 const pageSewa = el => pagePilar(el, "sewa");
 const pageService = el => pagePilar(el, "service");
@@ -341,9 +342,11 @@ async function pagePilar(el, key) {
   const corp = C.extra === "corporate";
   const [vend, sendiri, salesSewa, ins, pinOn] = corp ? [[], [], [], null, false] : await Promise.all([db.rpc("sewa_vendor", args).catch(() => []), db.rpc("sewa_unit_sendiri", { ...args, p_cabang: D.cab || null }).catch(() => []),
     db.rpc("pencapaian_sales", salesArgs(args, ["SEWA"])).catch(() => []), db.rpc("insentif_sewa").catch(() => ({ per_unit: 0 })), db.rpc("pin_aktif").catch(() => false)]);
-  const [cab, days, kat, cust] = await Promise.all([
+  const [cab0, days, kat, cust] = await Promise.all([
     db.rpc("pilar_cabang", { ...args, p_pilar: pArr }), db.rpc("gp_harian", cArgs), db.rpc("gp_kategori", cArgs),
-    db.rpc("pilar_pelanggan", { ...cArgs, p_corporate: false, p_urut: corp ? "transaksi" : "unit", p_limit: 100 })]);
+    db.rpc("pilar_pelanggan", { ...cArgs, p_corporate: corp, p_urut: corp ? "transaksi" : "unit", p_limit: 100 })]);
+  // corporate termaintenance = pelanggan berkategori CORPORATE saja
+  const cab = corp ? cab0.map(r => ({ ...r, pelanggan: r.pelanggan_corporate })) : cab0;
   const rows = D.cab ? cab.filter(r => r.cabang === D.cab) : cab;
   const s = rows.reduce((o, r) => (o.rev += +r.omzet, o.cost += +r.hpp, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.unit += +r.unit, o.tc += +r.transaksi_corporate, o.pc += +r.pelanggan_corporate, o.pel += +r.pelanggan, o), { rev: 0, cost: 0, gp: 0, inv: 0, unit: 0, tc: 0, pc: 0, pel: 0 });
   s.m = s.rev ? s.gp / s.rev : 0;
@@ -479,6 +482,7 @@ async function pageSales(el) {
     <div class="kpi"><span class="l">Unit sewa</span><span class="v">${fmtN(sewaRows.reduce((a, r) => a + +r.unit_sewa, 0))} <small style="font-size:13px;font-weight:600">unit</small></span><span class="s">insentif ${rp([...insBy.values()].reduce((a, v) => a + v, 0))}</span></div>
     <div class="kpi"><span class="l">GP rata-rata per sales</span><span class="v">${rpShort(named.length ? named.reduce((a, r) => a + +r.gross_profit, 0) / named.length : 0)}</span><span class="s">${fmtN(T.inv)} faktur</span></div>
   </div>
+  ${targetCorpCard(sewaRows, [D.cab || "Semua cabang", periodeLabel()].join(" · "))}
   <div class="gp-grid">
     ${barList("Gross profit per sales", label, named.map(r => ({ c: r.sales, v: +r.gross_profit, sub: r.cabang })), rp)}
     ${barList("Unit sewa per sales", [D.cab || "Semua cabang", periodeLabel()].join(" · ") + " · pilar SEWA", sewaRows.filter(r => r.sales !== "TANPA NAMA SALES").map(r => ({ c: r.sales, v: +r.unit_sewa, sub: r.cabang })), v => fmtN(v) + " unit")}
@@ -492,17 +496,45 @@ async function pageSales(el) {
   </div>`;
   const re = () => pageSales(el);
   bindFilter(el, re); bindBasis(el, re); bindInsentif(el, pinOn, re);
+  const ca = $("#corpAll", el); if (ca) ca.onchange = () => { CORP_ALL = ca.checked; re(); };
   const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
   $("#sDl", el).onclick = () => {
     const wb = XLSX.utils.book_new();
     const info = [["Laporan", "Pencapaian per Sales"], ["Filter", label], ["Nama sales dari", BASIS[SB]], ["Tarif insentif sewa", tarif], ["Rumus insentif", "Unit tersewa (QTY pilar SEWA) × tarif per unit"], ["Dibuat", fmtDateTime(new Date())]];
     const ws0 = XLSX.utils.aoa_to_sheet(info); ws0["!cols"] = [{ wch: 22 }, { wch: 70 }]; XLSX.utils.book_append_sheet(wb, ws0, "Keterangan");
-    const ws1 = XLSX.utils.json_to_sheet(sorted.map((r, i) => ({ "PERINGKAT": i + 1, "SALES": r.sales, "CABANG": r.cabang, "FAKTUR": +r.jumlah_faktur, "PELANGGAN": +r.pelanggan, "OMZET": +r.omzet, "HPP": +r.hpp, "GROSS PROFIT": +r.gross_profit, "UNIT SEWA": +r.unit_sewa, "GP MAINTENANCE": +r.gp_maintenance, "CORPORATE MAINTENANCE": +r.corporate_maintenance, "INSENTIF SEWA": insBy.get(r.sales) || 0 })));
+    const ws1 = XLSX.utils.json_to_sheet(sorted.map((r, i) => ({ "PERINGKAT": i + 1, "SALES": r.sales, "CABANG": r.cabang, "FAKTUR": +r.jumlah_faktur, "PELANGGAN": +r.pelanggan, "OMZET": +r.omzet, "HPP": +r.hpp, "GROSS PROFIT": +r.gross_profit, "UNIT SEWA": +r.unit_sewa, "GP MAINTENANCE": +r.gp_maintenance, "CORPORATE MAINTENANCE": +r.corporate_maintenance, "TARGET CORPORATE": TARGET_CORP_SALES * bulanPeriode(), "% CAPAI CORPORATE": +(+r.corporate_maintenance / (TARGET_CORP_SALES * bulanPeriode())).toFixed(3), "INSENTIF SEWA": insBy.get(r.sales) || 0 })));
     ws1["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 24 }, ...Array(9).fill({ wch: 16 })]; XLSX.utils.book_append_sheet(wb, ws1, "Pencapaian Sales");
     const ws2 = XLSX.utils.json_to_sheet(sewaRows.filter(r => +r.unit_sewa > 0).sort((a, b) => b.unit_sewa - a.unit_sewa).map(r => ({ "SALES": r.sales, "CABANG": r.cabang, "UNIT TERSEWA": +r.unit_sewa, "FAKTUR SEWA": +r.faktur_sewa, "OMZET SEWA": +r.omzet_sewa, "GP SEWA": +r.gp_sewa, "TARIF PER UNIT": tarif, "INSENTIF": +r.unit_sewa * tarif })));
     ws2["!cols"] = [{ wch: 28 }, { wch: 24 }, ...Array(6).fill({ wch: 16 })]; XLSX.utils.book_append_sheet(wb, ws2, "Insentif Sewa");
     saveWb(wb, `MFlash-Pencapaian-Sales-${(dari || "awal").replace(/-/g, "")}-${(sampai || "akhir").replace(/-/g, "")}.xlsx`);
   };
+}
+
+/* ---- Target corporate termaintenance per sales ---- */
+const TARGET_CORP_SALES = 9;            // corporate termaintenance per sales per bulan
+let CORP_ALL = false;                  // tampilkan juga sales tanpa transaksi maintenance
+function bulanPeriode() {
+  if (/^\d{4}-\d{2}$/.test(D.bulan)) return 1;
+  const [a, b] = periode();
+  if (a && b) { const x = new Date(a), y = new Date(b); return Math.max(1, (y.getFullYear() - x.getFullYear()) * 12 + y.getMonth() - x.getMonth() + 1); }
+  return Math.max(1, (BULAN || []).length);
+}
+const warnaCapai = p => p >= 1 ? "var(--ok)" : p >= 0.85 ? "var(--warn)" : "var(--bad)";
+function targetCorpCard(rows, label) {
+  const bln = bulanPeriode(), target = TARGET_CORP_SALES * bln;
+  const named = rows.filter(r => r.sales !== "TANPA NAMA SALES");
+  const list = named.filter(r => CORP_ALL || +r.corporate_maintenance > 0)
+    .map(r => ({ ...r, n: +r.corporate_maintenance, p: target ? +r.corporate_maintenance / target : 0 }))
+    .sort((a, b) => b.n - a.n || b.gp_maintenance - a.gp_maintenance || a.sales.localeCompare(b.sales));
+  const capai = list.filter(r => r.p >= 1).length, dekat = list.filter(r => r.p >= 0.85 && r.p < 1).length;
+  const tot = list.reduce((a, r) => a + r.n, 0);
+  return `<div class="card" id="corpCard"><h3>Pencapaian corporate termaintenance per sales <span class="pill ${capai ? "ok" : "warn"}">${fmtN(capai)} sales capai target</span></h3>
+    <p class="sub">${esc(label)} · Target <b>${fmtN(TARGET_CORP_SALES)} corporate per sales per bulan</b>${bln > 1 ? ` × ${fmtN(bln)} bulan = <b>${fmtN(target)}</b>` : ""}. Dihitung dari faktur <b>pilar MAINTENANCE</b> dengan <b>kategori pelanggan CORPORATE</b>; satu corporate dihitung satu walau beberapa transaksi. GP juga hanya dari faktur itu. Warna: hijau ≥100%, kuning 85–99%, merah &lt;85%.</p>
+    <div class="toolbar"><label class="sub" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="corpAll"${CORP_ALL ? " checked" : ""}> Tampilkan juga sales tanpa transaksi maintenance</label>
+      <span class="sub">${fmtN(list.length)} sales · total ${fmtN(tot)} corporate · ${fmtN(dekat)} sales mendekati target</span></div>
+    <div class="hbars rank" style="max-height:520px;overflow:auto">${list.map((r, i) => `<div class="hbar"><div class="hbar-l"><span class="rk">${i + 1}</span><span>${esc(r.sales)}<br><small style="color:var(--muted);font-weight:500">${esc(r.cabang)}</small></span></div>
+      <div class="hbar-t" role="img" aria-label="${esc(r.sales)}: ${fmtN(r.n)} dari ${fmtN(target)} corporate"><span style="width:${Math.min(100, r.p * 100)}%;background:${warnaCapai(r.p)}"></span></div>
+      <div class="hbar-v"><span style="color:${warnaCapai(r.p)}">${fmtN(r.n)} / ${fmtN(target)} · ${Math.round(r.p * 100)}%</span><small>${r.p >= 1 ? "tercapai" : `kurang ${fmtN(target - r.n)}`} · GP ${rpShort(r.gp_maintenance)}</small></div></div>`).join("") || `<p class="sub">Belum ada transaksi pilar MAINTENANCE pada filter ini.</p>`}</div></div>`;
 }
 
 /* =================== bar per cabang (untuk dibagikan ke tim) =================== */
