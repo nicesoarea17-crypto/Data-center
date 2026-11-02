@@ -601,12 +601,23 @@ async function exportRekon(key, cab, dari, sampai, onStep = () => {}) {
   if (pil) f.push(["pilar", "in", "(" + pil.map(p => `"${p.replace(/"/g, "")}"`).join(",") + ")"]);
   const rows = await db.all("v_faktur", { select: REK_COLS.map(c => c[0]).join(","), filters: f, order: "cabang.asc,tgl_faktur.asc,no_faktur.asc,baris.asc" }, n => onStep(`Mengambil faktur penjualan… ${fmtN(n)} baris`));
   const wb = XLSX.utils.book_new();
+  // Sewa: ambil Faktur Pembelian SEWA lebih dulu, supaya nama vendor/supplier bisa ditempel ke tiap baris sewa
+  let beli = [], vendBy = new Map();
+  if (key === "sewa") {
+    onStep("Mengambil faktur pembelian SEWA…");
+    const pf = []; if (cab) pf.push(["cabang", "eq", cab]);
+    const bDari = dari ? dari.slice(0, 7) + "-01" : null; if (bDari) pf.push(["tgl", "gte", bDari]); if (sampai) pf.push(["tgl", "lte", sampai]);
+    beli = await db.all("v_pembelian", { select: "cabang,tgl,no_faktur,baris,kategori_barang,kode_barang,nama_barang,qty,harga_satuan,total_harga,pemasok,kategori_kebutuhan", filters: pf, or: `nama_barang.ilike."*SEWA*",kategori_barang.ilike.SEWA`, order: "cabang.asc,tgl.asc,no_faktur.asc" });
+    for (const b of beli) { const k = b.cabang + "|" + String(b.tgl).slice(0, 7); if (!vendBy.has(k)) vendBy.set(k, new Map()); const m = vendBy.get(k), n = (b.pemasok || "Tanpa nama pemasok").trim(); m.set(n, (m.get(n) || 0) + (+b.total_harga || 0)); }
+    for (const r of rows) { const m = vendBy.get(r.cabang + "|" + String(r.tgl_faktur).slice(0, 7)); r.vendor = m ? [...m.keys()].join("; ") : "Tanpa vendor (unit sendiri / pembelian belum ada)"; }
+  }
+  const vendorText = (c, bln) => { const m = vendBy.get(c + "|" + bln); return m ? [...m.entries()].map(([n, v]) => `${n} (${rp(v)})`).join("; ") : ""; };
   // Ringkasan per cabang dihitung dari baris yang sama dengan sheet rincian, supaya angkanya pasti cocok
   const byC = new Map(); for (const r of rows) { if (!byC.has(r.cabang)) byC.set(r.cabang, []); byC.get(r.cabang).push(r); }
   const ring = [...byC.entries()].sort((a, b) => S.cabangs.indexOf(a[0]) - S.cabangs.indexOf(b[0])).map(([c, rs]) => {
     const s = k => Math.round(rs.reduce((a, r) => a + (+r[k] || 0), 0) * 100) / 100; const omzet = s("total_harga"), gp = s("gross_profit");
     const o = { "CABANG": c, "JUMLAH TRANSAKSI (FAKTUR)": new Set(rs.map(r => r.no_faktur)).size };
-    if (key === "sewa") o["UNIT TERSEWA (QTY)"] = s("qty");
+    if (key === "sewa") { o["UNIT TERSEWA (QTY)"] = s("qty"); o["VENDOR / SUPPLIER"] = [...new Set(rs.filter(r => +r.biaya_vendor).map(r => r.vendor))].join("; ") || "Tanpa vendor"; }
     if (key === "service") o["CORPORATE TERMAINTENANCE"] = new Set(rs.map(r => r.id_pelanggan || r.nama_customer)).size;
     Object.assign(o, { "OMZET": omzet, "HARGA BELI (ACCURATE)": s("harga_beli"), "BIAYA SEWA VENDOR": s("biaya_vendor"), "HPP TOTAL": s("hpp"), "GROSS PROFIT": gp, "MARGIN %": omzet ? +(gp / omzet * 100).toFixed(1) : 0 });
     return o;
@@ -620,7 +631,8 @@ async function exportRekon(key, cab, dari, sampai, onStep = () => {}) {
   XLSX.utils.book_append_sheet(wb, wsInfo, "Keterangan");
   const wsR = XLSX.utils.json_to_sheet(ring); wsR["!cols"] = Object.keys(ring[0] || { CABANG: 1 }).map(k => ({ wch: Math.max(12, k.length + 2) }));
   XLSX.utils.book_append_sheet(wb, wsR, "Ringkasan per Cabang");
-  XLSX.utils.book_append_sheet(wb, sheetRows(rows, REK_COLS, "TOTAL"), "Rincian Faktur Penjualan");
+  const rekCols = key === "sewa" ? REK_COLS.flatMap(c => c[0] === "biaya_vendor" ? [c, ["vendor", "VENDOR / SUPPLIER"]] : [c]) : REK_COLS;
+  XLSX.utils.book_append_sheet(wb, sheetRows(rows, rekCols, "TOTAL"), "Rincian Faktur Penjualan");
   if (key === "service") {
     onStep("Menyusun daftar corporate…");
     const m = new Map(); for (const r of rows) { const k = r.cabang + "|" + (r.id_pelanggan || r.nama_customer); let o = m.get(k); if (!o) { o = { cabang: r.cabang, id_pelanggan: r.id_pelanggan, nama_customer: r.nama_customer, kategori_pelanggan: r.kategori_pelanggan, no_wa: r.no_wa, f: new Set(), total_harga: 0, gross_profit: 0, terakhir: null }; m.set(k, o); } o.f.add(r.no_faktur); o.total_harga += +r.total_harga || 0; o.gross_profit += +r.gross_profit || 0; if (!o.terakhir || r.tgl_faktur > o.terakhir) o.terakhir = r.tgl_faktur; }
@@ -628,14 +640,10 @@ async function exportRekon(key, cab, dari, sampai, onStep = () => {}) {
     XLSX.utils.book_append_sheet(wb, sheetRows(list, [["cabang", "CABANG"], ["id_pelanggan", "ID PELANGGAN"], ["nama_customer", "NAMA CORPORATE"], ["kategori_pelanggan", "KATEGORI PELANGGAN"], ["no_wa", "NO WA"], ["transaksi", "JUMLAH TRANSAKSI"], ["total_harga", "OMZET"], ["gross_profit", "GROSS PROFIT"], ["terakhir", "TRANSAKSI TERAKHIR"]]), "Daftar Corporate");
   }
   if (key === "sewa") {
-    onStep("Mengambil faktur pembelian SEWA…");
-    const pf = []; if (cab) pf.push(["cabang", "eq", cab]);
-    const bDari = dari ? dari.slice(0, 7) + "-01" : null; if (bDari) pf.push(["tgl", "gte", bDari]); if (sampai) pf.push(["tgl", "lte", sampai]);
-    const beli = await db.all("v_pembelian", { select: "cabang,tgl,no_faktur,baris,kategori_barang,kode_barang,nama_barang,qty,harga_satuan,total_harga,pemasok,kategori_kebutuhan", filters: pf, or: `nama_barang.ilike."*SEWA*",kategori_barang.ilike.SEWA`, order: "cabang.asc,tgl.asc,no_faktur.asc" });
-    XLSX.utils.book_append_sheet(wb, sheetRows(beli, [["cabang", "CABANG"], ["tgl", "TANGGAL"], ["no_faktur", "NOMOR FAKTUR PEMBELIAN"], ["kategori_barang", "KATEGORI BARANG"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "QTY"], ["harga_satuan", "@HARGA"], ["total_harga", "TOTAL HARGA"], ["pemasok", "PEMASOK"], ["kategori_kebutuhan", "KATEGORI KEBUTUHAN"]], "TOTAL"), "Pembelian SEWA (Vendor)");
+    XLSX.utils.book_append_sheet(wb, sheetRows(beli, [["cabang", "CABANG"], ["tgl", "TANGGAL"], ["no_faktur", "NOMOR FAKTUR PEMBELIAN"], ["kategori_barang", "KATEGORI BARANG"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "QTY"], ["harga_satuan", "@HARGA"], ["total_harga", "TOTAL HARGA"], ["pemasok", "VENDOR / SUPPLIER"], ["kategori_kebutuhan", "KATEGORI KEBUTUHAN"]], "TOTAL"), "Pembelian SEWA (Vendor)");
     const v = await db.rpc("sewa_vendor", { p_dari: dari || null, p_sampai: sampai || null });
-    const vv = (cab ? v.filter(x => x.cabang === cab) : v).map(x => ({ "CABANG": x.cabang, "BULAN": namaBulan(String(x.bulan).slice(0, 7)), "UNIT DISEWAKAN": +x.unit_sewa, "UNIT DARI VENDOR": +x.unit_vendor, "UNIT MILIK SENDIRI": +(x.unit_sendiri || 0), "OMZET SEWA": +x.omzet_sewa, "BIAYA VENDOR": +x.biaya_vendor, "GP SEWA": x.omzet_sewa - x.biaya_vendor, "STATUS": +x.biaya_vendor && !+x.omzet_sewa ? "Ada pembelian, belum ada penjualan sewa" : !+x.biaya_vendor && +x.omzet_sewa ? (+x.unit_sendiri ? "Unit milik sendiri" : "Tanpa biaya vendor") : "Terpotong" }));
-    const wsV = XLSX.utils.json_to_sheet(vv); wsV["!cols"] = [{ wch: 18 }, { wch: 16 }, { wch: 15 }, { wch: 16 }, { wch: 18 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 38 }];
+    const vv = (cab ? v.filter(x => x.cabang === cab) : v).map(x => ({ "CABANG": x.cabang, "BULAN": namaBulan(String(x.bulan).slice(0, 7)), "UNIT DISEWAKAN": +x.unit_sewa, "UNIT DARI VENDOR": +x.unit_vendor, "UNIT MILIK SENDIRI": +(x.unit_sendiri || 0), "VENDOR / SUPPLIER": vendorText(x.cabang, String(x.bulan).slice(0, 7)), "OMZET SEWA": +x.omzet_sewa, "BIAYA VENDOR": +x.biaya_vendor, "GP SEWA": x.omzet_sewa - x.biaya_vendor, "STATUS": +x.biaya_vendor && !+x.omzet_sewa ? "Ada pembelian, belum ada penjualan sewa" : !+x.biaya_vendor && +x.omzet_sewa ? (+x.unit_sendiri ? "Unit milik sendiri" : "Tanpa biaya vendor") : "Terpotong" }));
+    const wsV = XLSX.utils.json_to_sheet(vv); wsV["!cols"] = [{ wch: 18 }, { wch: 16 }, { wch: 15 }, { wch: 16 }, { wch: 18 }, { wch: 48 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 38 }];
     XLSX.utils.book_append_sheet(wb, wsV, "Biaya Vendor per Bulan");
     onStep("Mengambil pemindahan barang (unit milik sendiri)…");
     const own = await db.rpc("sewa_unit_sendiri", { p_dari: dari || null, p_sampai: sampai || null, p_cabang: cab || null }).catch(() => []);
