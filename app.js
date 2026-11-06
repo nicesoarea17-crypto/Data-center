@@ -323,7 +323,7 @@ function rugiCard(rugi) {
 /* =================== TAB PILAR: SEWA & SERVICE & MAINTENANCE =================== */
 const PILAR_TABS = {
   sewa: { title: "Sewa", match: p => p === "SEWA", extra: "unit",
-    note: "Jumlah unit = total QTY pada baris faktur pilar SEWA." },
+    note: "Jumlah unit = QTY baris faktur pilar SEWA yang kategori barangnya SEWA atau LAPTOP. Aksesoris, sparepart/lisensi, jasa, dll. tidak dihitung sebagai unit." },
   service: { title: "Service & Maintenance Corporate", match: p => /MAINTENANCE/.test(p), extra: "corporate",
     note: "Hanya pilar yang namanya mengandung MAINTENANCE (pilar SERVICE biasa tidak ikut). Corporate termaintenance = jumlah pelanggan berkategori CORPORATE yang bertransaksi; satu perusahaan dihitung satu walau punya beberapa transaksi." }
 };
@@ -366,7 +366,7 @@ async function pagePilar(el, key) {
   ${corp ? `<div class="gp-grid">
     ${barCabang("Gross profit Maintenance per cabang", periodeLabel(), cab, r => r.gross_profit, rp)}
     ${barCabang("Corporate termaintenance per cabang", periodeLabel() + " · jumlah perusahaan", cab, r => r.pelanggan, v => fmtN(v) + " corporate")}
-  </div>` : barCabang("Unit tersewa per cabang", periodeLabel() + " · total QTY pilar Sewa", cab, r => r.unit, v => fmtN(v) + " unit")}
+  </div>` : barCabang("Unit tersewa per cabang", periodeLabel() + " · QTY barang SEWA/LAPTOP", cab, r => r.unit, v => fmtN(v) + " unit")}
   <div class="gp-grid">
     <div class="card"><h3>${corp ? "Corporate termaintenance per hari" : "Unit disewakan per hari"}</h3><p class="sub">${esc(label)} · jumlah ${corp ? "corporate yang bertransaksi di hari itu" : "unit"}</p>${trendSVG(days, corp ? "pelanggan" : "unit", true)}</div>
     <div class="card"><h3>Gross profit ${esc(C.title)} per hari</h3><p class="sub">${esc(label)}</p>${trendSVG(days, "gross_profit")}</div>
@@ -432,7 +432,7 @@ function insentifCard(rows, ins, pinOn, label) {
   const list = rows.filter(r => +r.unit_sewa > 0).map(r => ({ ...r, ins: +r.unit_sewa * tarif })).sort((a, b) => b.unit_sewa - a.unit_sewa || b.gp_sewa - a.gp_sewa);
   const t = list.reduce((o, r) => (o.u += +r.unit_sewa, o.f += +r.faktur_sewa, o.o += +r.omzet_sewa, o.g += +r.gp_sewa, o.i += r.ins, o), { u: 0, f: 0, o: 0, g: 0, i: 0 });
   return `<div class="card" id="insCard"><h3>Insentif sewa per sales <span class="pill ok">${rp(t.i)}</span></h3>
-    <p class="sub">${esc(label)} · Insentif = unit tersewa (QTY pilar SEWA) × tarif per unit. Nama sales dari kolom <b>${esc(BASIS[SB])}</b>.</p>
+    <p class="sub">${esc(label)} · Insentif = unit tersewa (QTY barang SEWA/LAPTOP di pilar SEWA) × tarif per unit. Nama sales dari kolom <b>${esc(BASIS[SB])}</b>.</p>
     <div class="toolbar" style="align-items:end;background:var(--accent-soft);border-radius:var(--r);padding:10px 12px">
       <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Pengali insentif (Rp per unit)<input id="insVal" inputmode="numeric" value="${fmtN(tarif)}" style="width:170px;font-weight:700"></label>
       ${pinOn ? `<label style="display:grid;gap:4px;font-weight:600;font-size:13px">PIN<input id="insPin" type="password" autocomplete="off" style="width:110px"></label>` : ""}
@@ -502,7 +502,7 @@ async function pageSales(el) {
   const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
   $("#sDl", el).onclick = () => {
     const wb = XLSX.utils.book_new();
-    const info = [["Laporan", "Pencapaian per Sales"], ["Filter", label], ["Nama sales dari", BASIS[SB]], ["Tarif insentif sewa", tarif], ["Rumus insentif", "Unit tersewa (QTY pilar SEWA) × tarif per unit"], ["Dibuat", fmtDateTime(new Date())]];
+    const info = [["Laporan", "Pencapaian per Sales"], ["Filter", label], ["Nama sales dari", BASIS[SB]], ["Tarif insentif sewa", tarif], ["Rumus insentif", "Unit tersewa (QTY barang SEWA/LAPTOP di pilar SEWA) × tarif per unit"], ["Dibuat", fmtDateTime(new Date())]];
     const ws0 = XLSX.utils.aoa_to_sheet(info); ws0["!cols"] = [{ wch: 22 }, { wch: 70 }]; XLSX.utils.book_append_sheet(wb, ws0, "Keterangan");
     const ws1 = XLSX.utils.json_to_sheet(sorted.map((r, i) => ({ "PERINGKAT": i + 1, "SALES": r.sales, "CABANG": r.cabang, "FAKTUR": +r.jumlah_faktur, "PELANGGAN": +r.pelanggan, "OMZET": +r.omzet, "HPP": +r.hpp, "GROSS PROFIT": +r.gross_profit, "UNIT SEWA": +r.unit_sewa, "GP MAINTENANCE": +r.gp_maintenance, "CORPORATE MAINTENANCE": +r.corporate_maintenance, "TARGET CORPORATE": TARGET_CORP_SALES * bulanPeriode(), "% CAPAI CORPORATE": +(+r.corporate_maintenance / (TARGET_CORP_SALES * bulanPeriode())).toFixed(3), "INSENTIF SEWA": insBy.get(r.sales) || 0 })));
     ws1["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 24 }, ...Array(9).fill({ wch: 16 })]; XLSX.utils.book_append_sheet(wb, ws1, "Pencapaian Sales");
@@ -587,8 +587,8 @@ async function resolvePilar(key) {
   const C = PILAR_TABS[key]; const pil = all.filter(C.match);
   return { pil: pil.length ? pil : (key === "sewa" ? ["SEWA"] : ["SERVICE & MAINTENANCE CORPORATE"]), all };
 }
-const REK_COLS = [["cabang", "CABANG"], ["tgl_faktur", "TGL FAKTUR"], ["no_faktur", "NO FAKTUR"], ["baris", "BARIS KE"], ["id_pelanggan", "ID PELANGGAN"], ["nama_customer", "NAMA CUSTOMER"], ["kategori_pelanggan", "KATEGORI PELANGGAN"], ["pilar", "PILAR"], ["kategori_penjualan", "KATEGORI PENJUALAN"], ["kategori_barang", "KATEGORI BARANG"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "QTY"], ["harga_satuan", "@HARGA"], ["total_harga", "TOTAL HARGA"], ["harga_beli", "HARGA BELI (ACCURATE)"], ["biaya_vendor", "BIAYA SEWA VENDOR"], ["hpp", "HPP TOTAL"], ["gross_profit", "GROSS PROFIT"], ["penjual_default", "PENJUAL DEFAULT"], ["nama_admin", "NAMA ADMIN"], ["no_wa", "NO WA"], ["sumber", "SUMBER DATA"]];
-const SUM_KEYS = ["qty", "total_harga", "harga_beli", "biaya_vendor", "hpp", "gross_profit"];
+const REK_COLS = [["cabang", "CABANG"], ["tgl_faktur", "TGL FAKTUR"], ["no_faktur", "NO FAKTUR"], ["baris", "BARIS KE"], ["id_pelanggan", "ID PELANGGAN"], ["nama_customer", "NAMA CUSTOMER"], ["kategori_pelanggan", "KATEGORI PELANGGAN"], ["pilar", "PILAR"], ["kategori_penjualan", "KATEGORI PENJUALAN"], ["kategori_barang", "KATEGORI BARANG"], ["kode_barang", "KODE BARANG"], ["nama_barang", "NAMA BARANG"], ["qty", "QTY"], ["unit", "UNIT TERSEWA"], ["harga_satuan", "@HARGA"], ["total_harga", "TOTAL HARGA"], ["harga_beli", "HARGA BELI (ACCURATE)"], ["biaya_vendor", "BIAYA SEWA VENDOR"], ["hpp", "HPP TOTAL"], ["gross_profit", "GROSS PROFIT"], ["penjual_default", "PENJUAL DEFAULT"], ["nama_admin", "NAMA ADMIN"], ["no_wa", "NO WA"], ["sumber", "SUMBER DATA"]];
+const SUM_KEYS = ["qty", "unit", "total_harga", "harga_beli", "biaya_vendor", "hpp", "gross_profit"];
 function sheetRows(rows, cols, totalLabel) {
   const out = rows.map(r => Object.fromEntries(cols.map(([k, h]) => [h, isEmpty(r[k]) ? null : (typeof r[k] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r[k]) ? toCell(r[k]) : (["qty", "harga_satuan", "total_harga", "harga_beli", "biaya_vendor", "hpp", "gross_profit", "total"].includes(k) ? +r[k] : r[k]))])));
   if (totalLabel && rows.length) out.push(Object.fromEntries(cols.map(([k, h], i) => [h, i === 0 ? totalLabel : SUM_KEYS.includes(k) ? Math.round(rows.reduce((a, r) => a + (+r[k] || 0), 0) * 100) / 100 : null])));
@@ -619,7 +619,7 @@ async function exportRekon(key, cab, dari, sampai, onStep = () => {}) {
   const ring = [...byC.entries()].sort((a, b) => S.cabangs.indexOf(a[0]) - S.cabangs.indexOf(b[0])).map(([c, rs]) => {
     const s = k => Math.round(rs.reduce((a, r) => a + (+r[k] || 0), 0) * 100) / 100; const omzet = s("total_harga"), gp = s("gross_profit");
     const o = { "CABANG": c, "JUMLAH TRANSAKSI (FAKTUR)": new Set(rs.map(r => r.no_faktur)).size };
-    if (key === "sewa") { o["UNIT TERSEWA (QTY)"] = s("qty"); o["VENDOR / SUPPLIER"] = [...new Set(rs.filter(r => +r.biaya_vendor).map(r => r.vendor))].join("; ") || "Tanpa vendor"; }
+    if (key === "sewa") { o["UNIT TERSEWA"] = s("unit"); o["VENDOR / SUPPLIER"] = [...new Set(rs.filter(r => +r.biaya_vendor).map(r => r.vendor))].join("; ") || "Tanpa vendor"; }
     if (key === "service") o["CORPORATE TERMAINTENANCE"] = new Set(rs.map(r => r.id_pelanggan || r.nama_customer)).size;
     Object.assign(o, { "OMZET": omzet, "HARGA BELI (ACCURATE)": s("harga_beli"), "BIAYA SEWA VENDOR": s("biaya_vendor"), "HPP TOTAL": s("hpp"), "GROSS PROFIT": gp, "MARGIN %": omzet ? +(gp / omzet * 100).toFixed(1) : 0 });
     return o;
