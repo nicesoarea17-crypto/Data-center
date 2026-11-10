@@ -544,7 +544,8 @@ function buatPengajuanXlsx(rin, o) {
   const R = Sheet(), S2 = "'Rincian Transaksi'!";
   const hd = ["TANGGAL", "NO FAKTUR", "CABANG", "NAMA SALES", "PELANGGAN", "BARANG", "UNIT", "TOTAL HARGA", "HARGA / UNIT", "GROSS PROFIT", "GP / UNIT", "DURASI SEWA", "PENGALI / UNIT", "INSENTIF", "DIAJUKAN", "CATATAN"];
   hd.forEach((h, j) => R.s(1, j + 1, h, ST.head)); R.h(1, 30);
-  const rows = [...rin].sort((a, b) => (a.sales === "TANPA NAMA SALES") - (b.sales === "TANPA NAMA SALES") || a.sales.localeCompare(b.sales) || a.cabang.localeCompare(b.cabang) || String(a.tgl_faktur).localeCompare(String(b.tgl_faktur)) || a.no_faktur.localeCompare(b.no_faktur));
+  const insSales = new Map(insentifPerSales(rin).map(r => [r.sales, r.ins]));
+  const rows = rin.filter(r => r.diajukan).sort((a, b) => (insSales.get(b.sales) || 0) - (insSales.get(a.sales) || 0) || a.sales.localeCompare(b.sales) || b.insentif - a.insentif || a.cabang.localeCompare(b.cabang) || String(a.tgl_faktur).localeCompare(String(b.tgl_faktur)) || a.no_faktur.localeCompare(b.no_faktur));
   rows.forEach((r, k) => { const i = k + 2;
     R.n(i, 1, xlDate(r.tgl_faktur), ST.dDate); R.s(i, 2, r.no_faktur, ST.dText); R.s(i, 3, r.cabang, ST.dText); R.s(i, 4, r.sales, ST.dText); R.s(i, 5, r.pelanggan || "-", ST.dText); R.s(i, 6, r.barang || "-", ST.dText);
     R.n(i, 7, r.unit, ST.dNum); R.n(i, 8, +r.total_harga, ST.dRp); R.f(i, 9, `H${i}/G${i}`, +r.total_harga / r.unit, ST.dRp); R.n(i, 10, Math.round(+r.gross_profit), ST.dRp); R.f(i, 11, `J${i}/G${i}`, r.gpu, ST.dRp);
@@ -556,7 +557,7 @@ function buatPengajuanXlsx(rin, o) {
   R.f(tr, 10, `SUM(J2:J${last})`, rows.reduce((a, r) => a + Math.round(+r.gross_profit), 0), ST.tRp); R.f(tr, 14, `SUMIFS(N2:N${last},O2:O${last},"Ya")`, rows.filter(r => r.diajukan).reduce((a, r) => a + r.insentif, 0), ST.tRp);
   const notes = ["Aturan pengali insentif per unit:", `1. Sewa BULANAN: selalu Rp ${fmtN(INS.tinggi)} per unit.`, `2. Sewa HARIAN / MINGGUAN dengan gross profit per unit Rp ${fmtN(INS.batasGP)} ke atas: Rp ${fmtN(INS.tinggi)} per unit.`, `3. Sewa HARIAN / MINGGUAN dengan gross profit per unit di bawah Rp ${fmtN(INS.batasGP)}: Rp ${fmtN(INS.rendah)} per unit.`,
     `DURASI SEWA diisi otomatis dari harga per unit (>= Rp ${fmtN(INS.batasBulanan)} = Bulanan, di bawahnya = Harian) karena Accurate tidak mencatat durasi. Cek dan ubah lewat pilihan bila keliru; pengali dan total di sheet PENGAJUAN ikut berubah.`,
-    `Unit = QTY baris berkategori barang SEWA/LAPTOP di pilar SEWA. Gross profit = total harga − harga beli − biaya sewa vendor (aplikasi MFlash Data Center). Nama sales dari kolom ${o.basisLabel}.`, "DIAJUKAN = Tidak: transaksi tanpa nama sales di Accurate, tidak ikut pengajuan sampai nama sales dilengkapi."];
+    `Unit = QTY baris berkategori barang SEWA/LAPTOP di pilar SEWA. Gross profit = total harga − harga beli − biaya sewa vendor (aplikasi MFlash Data Center). Nama sales dari kolom ${o.basisLabel}.`, "Transaksi tanpa nama sales di Accurate tidak dimasukkan ke file ini. Lengkapi nama sales di Accurate agar ikut pengajuan. DIAJUKAN = Tidak untuk mengeluarkan transaksi tertentu dari pengajuan."];
   notes.forEach((t, k) => R.s(tr + 2 + k, 1, t, k ? ST.noteB : ST.kLabel));
   const dv = `<dataValidations count="2"><dataValidation type="list" allowBlank="0" showErrorMessage="1" sqref="L2:L${last}"><formula1>"Bulanan,Mingguan,Harian"</formula1></dataValidation><dataValidation type="list" allowBlank="0" showErrorMessage="1" sqref="O2:O${last}"><formula1>"Ya,Tidak"</formula1></dataValidation></dataValidations>`;
   const sheet2 = R.xml({ cols: [11, 14, 20, 28, 34, 30, 7, 15, 14, 15, 13, 13, 14, 14, 11, 30], freeze: '<pane xSplit="3" ySplit="1" topLeftCell="D2" activePane="bottomRight" state="frozen"/>', filter: `A1:P${last}`, dv, land: true, fit: true });
@@ -577,7 +578,7 @@ function buatPengajuanXlsx(rin, o) {
   // satu baris per sales + cabang + pengali
   const g = new Map();
   for (const r of rows) { if (!r.diajukan) continue; const k = r.sales + "|" + r.cabang + "|" + r.pengali; const x = g.get(k) || { sales: r.sales, cabang: r.cabang, p: r.pengali, unit: 0 }; x.unit += r.unit; g.set(k, x); }
-  const grp = [...g.values()].sort((a, b) => a.sales.localeCompare(b.sales) || a.cabang.localeCompare(b.cabang) || b.p - a.p);
+  const grp = [...g.values()].sort((a, b) => b.unit * b.p - a.unit * a.p || b.p - a.p || a.sales.localeCompare(b.sales) || a.cabang.localeCompare(b.cabang));
   const rng = c => `${S2}$${c}$2:$${c}$${last}`;
   grp.forEach((x, k) => { const r = H0 + 1 + k; P.h(r, 20);
     P.s(r, 2, o.periodeSingkat, ST.dCenter); P.s(r, 3, x.sales, ST.dText); P.e(r, 4, ST.dText); P.s(r, 5, x.cabang, ST.dText); P.e(r, 6, ST.dText); P.m(`C${r}`, `D${r}`); P.m(`E${r}`, `F${r}`);
