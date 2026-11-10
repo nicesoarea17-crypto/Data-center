@@ -81,7 +81,14 @@ Setiap kali file di GitHub diubah, Cloudflare akan memperbarui aplikasinya secar
 ## Pencapaian Sales & insentif sewa
 Menu **Pencapaian Sales**: peringkat GP dan unit sewa per sales, plus laporan per sales (faktur, pelanggan, omzet, GP, unit sewa, GP maintenance, corporate maintenance, insentif). Ikut filter cabang, bulan, dan pilar. Nama sales bisa diambil dari kolom **Nama Default Penjual** atau **Yang Menyerahkan / Menjual** (pilihan di kanan atas). Nama ditulis huruf besar supaya ejaan berbeda huruf tidak terpisah.
 
-**Insentif sewa = unit tersewa (QTY pilar SEWA) × tarif per unit.** Tarif diisi di kotak "Pengali insentif" (menu Pencapaian Sales atau tab Sewa) lalu klik **Simpan tarif**; tarif tersimpan di database dan berlaku untuk semua pengguna. Bila PIN hapus dipasang, mengubah tarif juga wajib PIN. Tombol **Unduh Excel pencapaian** menghasilkan file berisi pencapaian per sales dan rincian insentif sewa.
+**Insentif sewa per unit** (unit = QTY barang SEWA/LAPTOP di pilar SEWA):
+- sewa **bulanan**: selalu Rp 25.000;
+- sewa harian/mingguan dengan **gross profit per unit ≥ Rp 100.000**: Rp 25.000;
+- sewa harian/mingguan dengan gross profit per unit di bawah Rp 100.000: Rp 5.000.
+
+Accurate tidak mencatat durasi sewa, jadi aplikasi menebaknya dari harga per unit (≥ Rp 250.000 = bulanan). Transaksi tanpa nama sales tidak ikut pengajuan dan ditampilkan sebagai peringatan. Angka pengali diatur di `app.js` (konstanta `INS`).
+
+**Unduh Pengajuan Insentif** (menu Pencapaian Sales dan tab Sewa): satu klik menghasilkan file Excel form PENGAJUAN BIAYA sesuai filter bulan/cabang/basis nama sales — logo, satu baris per sales + cabang + pengali, Grand Total, tanda tangan (Mengajukan / Disetujui / Disetujui), Sumber Dana, kotak Validasi FA dan Penerima Berkas — plus sheet **Rincian Transaksi** dengan pilihan DURASI SEWA dan DIAJUKAN yang bisa dikoreksi (pengali dan total ikut berubah). Nama, jabatan, penyetuju, kota, tanggal penyerahan, bank dan no rekening diisi di kotak di atas tombol; isian hanya tersimpan di browser yang dipakai (tidak masuk kode/database). Tanda tangan basah dibubuhkan setelah dicetak. Tombol **Unduh Excel pencapaian** tetap tersedia untuk laporan pencapaian per sales.
 
 ## Unduh Laporan (rekonsiliasi dengan Accurate)
 Menu **Unduh Laporan** (atau tombol **Unduh Excel rekonsiliasi** di tab Sewa / Service & Maintenance Corporate): pilih laporan, cabang, dan bulan, lalu unduh. File Excel berisi sheet Keterangan, Ringkasan per Cabang, Rincian Faktur Penjualan per baris (dengan NO FAKTUR dan baris TOTAL), ditambah Pembelian SEWA & Biaya Vendor per Bulan untuk laporan Sewa, atau Daftar Corporate untuk laporan Maintenance. Cocokkan NO FAKTUR dan TOTAL HARGA dengan laporan Accurate pada filter yang sama.

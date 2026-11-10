@@ -6,6 +6,8 @@ window.__mfStarted = true;
 
 /* =================== util =================== */
 const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+function unduhBlob(blob, name) { if (window.__SAVED) window.__SAVED.push({ name, size: blob.size, blob }); const u = URL.createObjectURL(blob), x = document.createElement("a"); x.href = u; x.download = name; document.body.appendChild(x); x.click(); x.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); }
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const nf = new Intl.NumberFormat("id-ID");
 const fmtN = n => nf.format(Math.round(Number(n) || 0));
@@ -340,8 +342,8 @@ async function pagePilar(el, key) {
   const adaPilar = [...new Set(known.map(r => r.pilar))];
   const cArgs = { ...args, p_cabang: D.cab || null, p_pilar: pArr };
   const corp = C.extra === "corporate";
-  const [vend, sendiri, salesSewa, ins, pinOn] = corp ? [[], [], [], null, false] : await Promise.all([db.rpc("sewa_vendor", args).catch(() => []), db.rpc("sewa_unit_sendiri", { ...args, p_cabang: D.cab || null }).catch(() => []),
-    db.rpc("pencapaian_sales", salesArgs(args, ["SEWA"])).catch(() => []), db.rpc("insentif_sewa").catch(() => ({ per_unit: 0 })), db.rpc("pin_aktif").catch(() => false)]);
+  const [vend, sendiri, rinSewa] = corp ? [[], [], []] : await Promise.all([db.rpc("sewa_vendor", args).catch(() => []), db.rpc("sewa_unit_sendiri", { ...args, p_cabang: D.cab || null }).catch(() => []),
+    db.rpc("insentif_sewa_rincian", { ...args, p_cabang: D.cab || null, p_basis: SB }).then(hitungInsentif).catch(() => [])]);
   const [cab0, days, kat, cust] = await Promise.all([
     db.rpc("pilar_cabang", { ...args, p_pilar: pArr }), db.rpc("gp_harian", cArgs), db.rpc("gp_kategori", cArgs),
     db.rpc("pilar_pelanggan", { ...cArgs, p_corporate: corp, p_urut: corp ? "transaksi" : "unit", p_limit: 100 })]);
@@ -381,11 +383,11 @@ async function pagePilar(el, key) {
     ${cust.map(c => `<tr><td class="cab">${esc(c.cabang)}</td><td style="white-space:normal;min-width:180px">${esc(c.nama)}</td><td class="mono">${esc(c.id_pelanggan)}</td><td>${esc(c.kategori_pelanggan)}</td><td class="mono">${esc(c.no_wa)}</td>${corp ? "" : `<td class="num"><b>${fmtN(c.unit)}</b></td>`}<td class="num">${corp ? `<b>${fmtN(c.jumlah_faktur)}</b>` : fmtN(c.jumlah_faktur)}</td><td class="num">${rp(c.omzet)}</td><td class="num">${rp(c.gross_profit)}</td><td>${fmtDate(c.faktur_terakhir)}</td></tr>`).join("") || `<tr><td colspan="10" class="sub">Tidak ada data.</td></tr>`}</tbody></table></div></div>
   ${corp ? "" : vendorCard(D.cab ? vend.filter(v => v.cabang === D.cab) : vend)}
   ${corp ? "" : sendiriCard(sendiri, label)}
-  ${corp ? "" : `<div class="toolbar">${basisSelect()}</div>` + insentifCard(salesSewa, ins, pinOn, label)}
+  ${corp ? "" : `<div class="toolbar">${basisSelect()}</div>` + insentifCard(rinSewa, label)}
   ${katCard(kat, label, corp ? null : ["unit", "Unit"])}
   </div>`;
   const re = () => pagePilar(el, key);
-  if (!corp) { bindInsentif(el, pinOn, re); bindBasis(el, re); }
+  if (!corp) { bindPengajuan(el, rinSewa, dari, sampai); bindBasis(el, re); }
   $("#pDl", el).onclick = async () => { const b = $("#pDl", el); b.disabled = true; try { await unduhDenganProgres(key, D.cab || null, dari || null, sampai || null); } catch (e) {} b.disabled = false; };
   bindFilter(el, re);
   const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
@@ -427,32 +429,232 @@ function barList(title, sub, list, fmt, opt = {}) {
     <div class="hbars rank" style="max-height:${opt.maxH || 560}px;overflow:auto">${list.map((x, i) => `<div class="hbar"><div class="hbar-l"><span class="rk">${rk[i]}</span><span>${esc(x.c)}${x.sub ? `<br><small style="color:var(--muted);font-weight:500">${esc(x.sub)}</small>` : ""}</span></div><div class="hbar-t" role="img" aria-label="${esc(x.c)}: ${esc(fmt(x.v))}"><span style="width:${max > 0 ? Math.max(0, x.v) / max * 100 : 0}%"></span></div><div class="hbar-v">${esc(fmt(x.v))}${x.note ? `<small>${esc(x.note)}</small>` : `<small>${tot ? Math.round(x.v / tot * 100) : 0}% dari total</small>`}</div></div>`).join("") || `<p class="sub">Belum ada pencapaian pada filter ini.</p>`}</div>
     ${list.length ? `<p class="sub" style="margin-top:0">Total: <b>${esc(fmt(tot))}</b></p>` : ""}</div>`;
 }
-function insentifCard(rows, ins, pinOn, label) {
-  const tarif = +ins.per_unit || 0;
-  const list = rows.filter(r => +r.unit_sewa > 0).map(r => ({ ...r, ins: +r.unit_sewa * tarif })).sort((a, b) => b.unit_sewa - a.unit_sewa || b.gp_sewa - a.gp_sewa);
-  const t = list.reduce((o, r) => (o.u += +r.unit_sewa, o.f += +r.faktur_sewa, o.o += +r.omzet_sewa, o.g += +r.gp_sewa, o.i += r.ins, o), { u: 0, f: 0, o: 0, g: 0, i: 0 });
-  return `<div class="card" id="insCard"><h3>Insentif sewa per sales <span class="pill ok">${rp(t.i)}</span></h3>
-    <p class="sub">${esc(label)} · Insentif = unit tersewa (QTY barang SEWA/LAPTOP di pilar SEWA) × tarif per unit. Nama sales dari kolom <b>${esc(BASIS[SB])}</b>.</p>
-    <div class="toolbar" style="align-items:end;background:var(--accent-soft);border-radius:var(--r);padding:10px 12px">
-      <label style="display:grid;gap:4px;font-weight:600;font-size:13px">Pengali insentif (Rp per unit)<input id="insVal" inputmode="numeric" value="${fmtN(tarif)}" style="width:170px;font-weight:700"></label>
-      ${pinOn ? `<label style="display:grid;gap:4px;font-weight:600;font-size:13px">PIN<input id="insPin" type="password" autocomplete="off" style="width:110px"></label>` : ""}
-      <button class="primary" id="insSave">Simpan tarif</button>
-      <span class="sub" id="insMsg" role="status">${ins.diubah_pada ? `Terakhir diubah ${esc(ins.diubah_pada)}${ins.diubah_oleh ? " oleh " + esc(ins.diubah_oleh) : ""}.` : "Tarif belum diatur."} Tarif berlaku untuk semua orang yang membuka aplikasi.</span>
-    </div>
-    ${tarif ? "" : `<div class="notice warn">Isi pengali insentif per unit dulu, lalu klik Simpan tarif.</div>`}
-    ${barList("Pencapaian insentif sewa", label + " · " + rp(tarif) + " per unit", list.map(r => ({ c: r.sales, v: r.ins, sub: r.cabang, note: fmtN(r.unit_sewa) + " unit × " + rp(tarif) })), rp, { maxH: 420 })}
-    <div class="tablebox" style="max-height:420px"><table><thead><tr><th>Sales</th><th>Cabang</th><th class="num">Unit tersewa</th><th class="num">Faktur sewa</th><th class="num">Omzet sewa</th><th class="num">GP sewa</th><th class="num">Insentif</th></tr></thead><tbody>
-    ${list.map(r => `<tr><td class="cab">${esc(r.sales)}</td><td>${esc(r.cabang)}</td><td class="num"><b>${fmtN(r.unit_sewa)}</b></td><td class="num">${fmtN(r.faktur_sewa)}</td><td class="num">${rp(r.omzet_sewa)}</td><td class="num">${rp(r.gp_sewa)}</td><td class="num"><b>${rp(r.ins)}</b></td></tr>`).join("") || `<tr><td colspan="7" class="sub">Belum ada penjualan pilar SEWA pada filter ini.</td></tr>`}
-    ${list.length > 1 ? `<tr class="tot"><td colspan="2">TOTAL</td><td class="num">${fmtN(t.u)}</td><td class="num">${fmtN(t.f)}</td><td class="num">${rp(t.o)}</td><td class="num">${rp(t.g)}</td><td class="num">${rp(t.i)}</td></tr>` : ""}</tbody></table></div></div>`;
+/* =================== PENGAJUAN INSENTIF SEWA (file Excel berformat, tanpa library tambahan) =================== */
+// Aturan pengali per unit:
+//  - sewa BULANAN: selalu Rp 25.000
+//  - harian/mingguan dengan gross profit per unit >= Rp 100.000: Rp 25.000
+//  - harian/mingguan dengan gross profit per unit < Rp 100.000: Rp 5.000
+// Durasi tidak tercatat di Accurate, jadi ditebak dari harga per unit (>= Rp 250.000 = bulanan); bisa diubah di Excel.
+const INS = { tinggi: 25000, rendah: 5000, batasGP: 100000, batasBulanan: 250000 };
+const durasiTebak = r => (+r.total_harga / (+r.unit || 1)) >= INS.batasBulanan ? "Bulanan" : "Harian";
+const pengaliUnit = (durasi, gpUnit) => durasi === "Bulanan" || gpUnit >= INS.batasGP ? INS.tinggi : INS.rendah;
+function hitungInsentif(rows) {
+  return rows.map(r => { const unit = +r.unit || 0, gpu = unit ? +r.gross_profit / unit : 0, durasi = durasiTebak(r), p = pengaliUnit(durasi, gpu);
+    return { ...r, unit, gpu, durasi, pengali: p, insentif: unit * p, diajukan: r.sales !== "TANPA NAMA SALES" }; });
 }
-function bindInsentif(el, pinOn, re) {
-  const b = $("#insSave", el); if (!b) return;
-  const inp = $("#insVal", el); inp.oninput = () => { const n = inp.value.replace(/\D/g, ""); inp.value = n ? fmtN(+n) : ""; };
-  b.onclick = async () => {
-    const v = +inp.value.replace(/\D/g, ""); if (!inp.value.trim()) { $("#insMsg", el).textContent = "Isi tarif per unit."; return; }
-    b.disabled = true; $("#insMsg", el).textContent = "Menyimpan…";
-    try { await db.rpc("set_insentif_sewa", { p_per_unit: v, p_oleh: uploader() || null, p_pin: pinOn ? $("#insPin", el).value : null }); toast(`Tarif insentif sewa disimpan: ${rp(v)} per unit.`); re(); }
-    catch (e) { $("#insMsg", el).textContent = "Gagal: " + e.message; b.disabled = false; }
+function insentifPerSales(rin) {
+  const m = new Map();
+  for (const r of rin) { if (!r.diajukan) continue; const o = m.get(r.sales) || { sales: r.sales, cabang: new Set(), u25: 0, u5: 0, unit: 0, gp: 0, ins: 0, trx: new Set() };
+    o.cabang.add(r.cabang); o.unit += r.unit; o.gp += +r.gross_profit; o.ins += r.insentif; o.trx.add(r.cabang + r.no_faktur); if (r.pengali === INS.tinggi) o.u25 += r.unit; else o.u5 += r.unit; m.set(r.sales, o); }
+  return [...m.values()].map(o => ({ ...o, cabang: [...o.cabang].join(", "), trx: o.trx.size })).sort((a, b) => b.ins - a.ins || b.unit - a.unit);
+}
+
+// ---- penulis ZIP sederhana (tanpa kompresi) ----
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC_T[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+function zipStore(files) {
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  for (const [name, data] of files) {
+    const nb = enc.encode(name), db = typeof data === "string" ? enc.encode(data) : data, crc = crc32(db);
+    const h = new DataView(new ArrayBuffer(30)); h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(8, 0, true); h.setUint16(10, 0, true); h.setUint16(12, 0x21, true);
+    h.setUint32(14, crc, true); h.setUint32(18, db.length, true); h.setUint32(22, db.length, true); h.setUint16(26, nb.length, true);
+    parts.push(new Uint8Array(h.buffer), nb, db);
+    const c = new DataView(new ArrayBuffer(46)); c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(14, 0x21, true);
+    c.setUint32(16, crc, true); c.setUint32(20, db.length, true); c.setUint32(24, db.length, true); c.setUint16(28, nb.length, true); c.setUint32(42, off, true);
+    central.push(new Uint8Array(c.buffer), nb); off += 30 + nb.length + db.length;
+  }
+  const csize = central.reduce((a, b) => a + b.length, 0);
+  const e = new DataView(new ArrayBuffer(22)); e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...central, new Uint8Array(e.buffer)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+const b64bytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const xe = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const colN = n => { let s = ""; while (n) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+const xlDate = d => { const [y, m, dd] = String(d).slice(0, 10).split("-").map(Number); return (Date.UTC(y, m - 1, dd) - Date.UTC(1899, 11, 30)) / 864e5; };
+
+// ---- gaya sel (indeks cellXfs) ----
+const ST = { def: 0, title: 1, addr: 2, label: 3, text: 4, head: 5, dText: 6, dCenter: 7, dRp: 8, dNum: 9, tLabel: 10, tNum: 11, tRp: 12, yellow: 13, note: 14, sLabel: 15, sName: 16, sJob: 17, box: 18, dDate: 19, dInp: 20, kLabel: 21, dana: 22, noteB: 23, dRpBold: 24 };
+const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="3"><numFmt numFmtId="164" formatCode="_(&quot;Rp&quot;* #,##0_);_(&quot;Rp&quot;* \\(#,##0\\);_(&quot;Rp&quot;* &quot;-&quot;_);_(@_)"/><numFmt numFmtId="165" formatCode="#,##0;-#,##0;&quot;-&quot;"/><numFmt numFmtId="166" formatCode="dd-mmm-yy"/></numFmts>
+<fonts count="10"><font><sz val="10"/><name val="Arial"/></font><font><b/><sz val="16"/><name val="Arial"/></font><font><b/><sz val="9"/><name val="Arial"/></font><font><b/><sz val="10"/><name val="Arial"/></font><font><sz val="9"/><name val="Arial"/></font><font><i/><sz val="8"/><color rgb="FF808080"/><name val="Arial"/></font><font><b/><i/><sz val="10"/><name val="Arial"/></font><font><b/><sz val="12"/><name val="Arial"/></font><font><i/><sz val="9"/><name val="Arial"/></font><font><b/><sz val="9"/><name val="Arial"/></font></fonts>
+<fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFC000"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF2F2F2"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF4CC"/></patternFill></fill></fills>
+<borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/><diagonal/></border><border><left style="medium"/><right style="medium"/><top style="medium"/><bottom style="medium"/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="25">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="3" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="164" fontId="4" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="165" fontId="4" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="165" fontId="3" fillId="3" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="164" fontId="3" fillId="3" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="6" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="9" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top"/></xf>
+<xf numFmtId="166" fontId="4" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="9" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="7" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="8" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="164" fontId="9" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>
+</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+
+// ---- pembentuk sheet ----
+function Sheet() {
+  const rows = new Map(), merges = [], heights = {};
+  const put = (r, c, cell) => { if (!rows.has(r)) rows.set(r, new Map()); rows.get(r).set(c, cell); };
+  return {
+    s: (r, c, v, st = 0) => put(r, c, { t: "s", v, st }),
+    n: (r, c, v, st = 0) => put(r, c, { t: "n", v, st }),
+    f: (r, c, f, v, st = 0) => put(r, c, { t: "f", f, v, st }),
+    e: (r, c, st) => put(r, c, { t: "e", st }),
+    m: (a, b) => merges.push(`${a}:${b}`),
+    h: (r, ht) => { heights[r] = ht; },
+    xml(extra = {}) {
+      const rs = [...rows.keys()].concat(Object.keys(heights).map(Number)).filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => a - b);
+      const body = rs.map(r => { const cs = rows.get(r) || new Map();
+        const cells = [...cs.keys()].sort((a, b) => a - b).map(c => { const x = cs.get(c), ref = colN(c) + r, st = x.st ? ` s="${x.st}"` : "";
+          if (x.t === "s") return `<c r="${ref}"${st} t="inlineStr"><is><t xml:space="preserve">${xe(x.v)}</t></is></c>`;
+          if (x.t === "n") return `<c r="${ref}"${st}><v>${x.v}</v></c>`;
+          if (x.t === "f") return `<c r="${ref}"${st}${typeof x.v === "string" ? ' t="str"' : ""}><f>${xe(x.f)}</f>${x.v != null ? `<v>${xe(x.v)}</v>` : ""}</c>`;
+          return `<c r="${ref}"${st}/>`; }).join("");
+        return `<row r="${r}"${heights[r] ? ` ht="${heights[r]}" customHeight="1"` : ""}>${cells}</row>`; }).join("");
+      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetPr>${extra.fit ? '<pageSetUpPr fitToPage="1"/>' : ""}</sheetPr><sheetViews><sheetView workbookViewId="0"${extra.noGrid ? ' showGridLines="0"' : ""}${extra.tab ? ' tabSelected="1"' : ""}>${extra.freeze || ""}</sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/><cols>${extra.cols.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols>
+<sheetData>${body}</sheetData>${extra.filter ? `<autoFilter ref="${extra.filter}"/>` : ""}${merges.length ? `<mergeCells count="${merges.length}">${merges.map(m => `<mergeCell ref="${m}"/>`).join("")}</mergeCells>` : ""}${extra.dv || ""}
+<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="${extra.land ? "landscape" : "portrait"}" fitToWidth="1" fitToHeight="0"/>${extra.drawing ? '<drawing r:id="rId1"/>' : ""}</worksheet>`;
+    }
+  };
+}
+
+function buatPengajuanXlsx(rin, o) {
+  // ---------- sheet 2: Rincian Transaksi ----------
+  const R = Sheet(), S2 = "'Rincian Transaksi'!";
+  const hd = ["TANGGAL", "NO FAKTUR", "CABANG", "NAMA SALES", "PELANGGAN", "BARANG", "UNIT", "TOTAL HARGA", "HARGA / UNIT", "GROSS PROFIT", "GP / UNIT", "DURASI SEWA", "PENGALI / UNIT", "INSENTIF", "DIAJUKAN", "CATATAN"];
+  hd.forEach((h, j) => R.s(1, j + 1, h, ST.head)); R.h(1, 30);
+  const rows = [...rin].sort((a, b) => (a.sales === "TANPA NAMA SALES") - (b.sales === "TANPA NAMA SALES") || a.sales.localeCompare(b.sales) || a.cabang.localeCompare(b.cabang) || String(a.tgl_faktur).localeCompare(String(b.tgl_faktur)) || a.no_faktur.localeCompare(b.no_faktur));
+  rows.forEach((r, k) => { const i = k + 2;
+    R.n(i, 1, xlDate(r.tgl_faktur), ST.dDate); R.s(i, 2, r.no_faktur, ST.dText); R.s(i, 3, r.cabang, ST.dText); R.s(i, 4, r.sales, ST.dText); R.s(i, 5, r.pelanggan || "-", ST.dText); R.s(i, 6, r.barang || "-", ST.dText);
+    R.n(i, 7, r.unit, ST.dNum); R.n(i, 8, +r.total_harga, ST.dRp); R.f(i, 9, `H${i}/G${i}`, +r.total_harga / r.unit, ST.dRp); R.n(i, 10, Math.round(+r.gross_profit), ST.dRp); R.f(i, 11, `J${i}/G${i}`, r.gpu, ST.dRp);
+    R.s(i, 12, r.durasi, ST.dInp); R.f(i, 13, `IF(OR(L${i}="Bulanan",K${i}>=${INS.batasGP}),${INS.tinggi},${INS.rendah})`, r.pengali, ST.dRp); R.f(i, 14, `G${i}*M${i}`, r.insentif, ST.dRp);
+    R.s(i, 15, r.diajukan ? "Ya" : "Tidak", ST.dInp); R.s(i, 16, r.diajukan ? (r.sales_lain ? `Yang menyerahkan/menjual: ${r.sales_lain}` : "") : "Nama sales kosong di Accurate", ST.dText); });
+  const last = Math.max(2, rows.length + 1), tr = last + 1;
+  R.s(tr, 1, "TOTAL", ST.tLabel); for (let j = 2; j <= 16; j++) R.e(tr, j, ST.tLabel);
+  R.f(tr, 7, `SUM(G2:G${last})`, rows.reduce((a, r) => a + r.unit, 0), ST.tNum); R.f(tr, 8, `SUM(H2:H${last})`, rows.reduce((a, r) => a + +r.total_harga, 0), ST.tRp);
+  R.f(tr, 10, `SUM(J2:J${last})`, rows.reduce((a, r) => a + Math.round(+r.gross_profit), 0), ST.tRp); R.f(tr, 14, `SUMIFS(N2:N${last},O2:O${last},"Ya")`, rows.filter(r => r.diajukan).reduce((a, r) => a + r.insentif, 0), ST.tRp);
+  const notes = ["Aturan pengali insentif per unit:", `1. Sewa BULANAN: selalu Rp ${fmtN(INS.tinggi)} per unit.`, `2. Sewa HARIAN / MINGGUAN dengan gross profit per unit Rp ${fmtN(INS.batasGP)} ke atas: Rp ${fmtN(INS.tinggi)} per unit.`, `3. Sewa HARIAN / MINGGUAN dengan gross profit per unit di bawah Rp ${fmtN(INS.batasGP)}: Rp ${fmtN(INS.rendah)} per unit.`,
+    `DURASI SEWA diisi otomatis dari harga per unit (>= Rp ${fmtN(INS.batasBulanan)} = Bulanan, di bawahnya = Harian) karena Accurate tidak mencatat durasi. Cek dan ubah lewat pilihan bila keliru; pengali dan total di sheet PENGAJUAN ikut berubah.`,
+    `Unit = QTY baris berkategori barang SEWA/LAPTOP di pilar SEWA. Gross profit = total harga − harga beli − biaya sewa vendor (aplikasi MFlash Data Center). Nama sales dari kolom ${o.basisLabel}.`, "DIAJUKAN = Tidak: transaksi tanpa nama sales di Accurate, tidak ikut pengajuan sampai nama sales dilengkapi."];
+  notes.forEach((t, k) => R.s(tr + 2 + k, 1, t, k ? ST.noteB : ST.kLabel));
+  const dv = `<dataValidations count="2"><dataValidation type="list" allowBlank="0" showErrorMessage="1" sqref="L2:L${last}"><formula1>"Bulanan,Mingguan,Harian"</formula1></dataValidation><dataValidation type="list" allowBlank="0" showErrorMessage="1" sqref="O2:O${last}"><formula1>"Ya,Tidak"</formula1></dataValidation></dataValidations>`;
+  const sheet2 = R.xml({ cols: [11, 14, 20, 28, 34, 30, 7, 15, 14, 15, 13, 13, 14, 14, 11, 30], freeze: '<pane xSplit="3" ySplit="1" topLeftCell="D2" activePane="bottomRight" state="frozen"/>', filter: `A1:P${last}`, dv, land: true, fit: true });
+
+  // ---------- sheet 1: PENGAJUAN ----------
+  const P = Sheet();
+  for (let r = 1; r <= 16; r++) P.h(r, 20);
+  P.s(2, 2, "PENGAJUAN BIAYA", ST.title);
+  [o.alamat1, o.alamat2, o.alamat3].forEach((t, k) => t && P.s(7 + k, 2, t, ST.addr));
+  for (let c = 2; c <= 4; c++) P.e(11, c, ST.yellow);
+  P.s(11, 6, "Keterangan", ST.yellow); for (let c = 7; c <= 9; c++) P.e(11, c, ST.yellow);
+  [["Nama", ": " + o.nama], ["Jabatan", ": " + o.jabatan], ["Jenis Keperluan", ": Insentif Sewa Sales"], ["Periode", ": " + o.periode]].forEach(([a, b], k) => { P.s(12 + k, 2, a, ST.label); P.s(12 + k, 3, b, ST.text); });
+  [["Tgl Penyerahan", ": " + (o.tglSerah || "")], ["Bank / Atas Nama", ": " + (o.bank || "")], ["No Rekening", ": " + (o.rekening || "")]].forEach(([a, b], k) => { P.s(12 + k, 6, a, ST.kLabel); P.s(12 + k, 7, b, ST.kLabel); });
+  P.s(12, 9, "Validasi FA", ST.box); P.e(13, 9, ST.box); P.e(14, 9, ST.box); P.m("I12", "I14");
+  const H0 = 17; P.h(H0, 30);
+  [["B", "TANGGAL"], ["C", "NAMA SALES"], ["E", "CABANG"], ["G", "KUANTITAS (UNIT)"], ["H", "HARGA / PCS"], ["I", "TOTAL"]].forEach(([c, t]) => P.s(H0, c.charCodeAt(0) - 64, t, ST.head));
+  [4, 6].forEach(c => P.e(H0, c, ST.head)); P.m(`C${H0}`, `D${H0}`); P.m(`E${H0}`, `F${H0}`);
+  // satu baris per sales + cabang + pengali
+  const g = new Map();
+  for (const r of rows) { if (!r.diajukan) continue; const k = r.sales + "|" + r.cabang + "|" + r.pengali; const x = g.get(k) || { sales: r.sales, cabang: r.cabang, p: r.pengali, unit: 0 }; x.unit += r.unit; g.set(k, x); }
+  const grp = [...g.values()].sort((a, b) => a.sales.localeCompare(b.sales) || a.cabang.localeCompare(b.cabang) || b.p - a.p);
+  const rng = c => `${S2}$${c}$2:$${c}$${last}`;
+  grp.forEach((x, k) => { const r = H0 + 1 + k; P.h(r, 20);
+    P.s(r, 2, o.periodeSingkat, ST.dCenter); P.s(r, 3, x.sales, ST.dText); P.e(r, 4, ST.dText); P.s(r, 5, x.cabang, ST.dText); P.e(r, 6, ST.dText); P.m(`C${r}`, `D${r}`); P.m(`E${r}`, `F${r}`);
+    P.f(r, 7, `SUMIFS(${rng("G")},${rng("D")},C${r},${rng("C")},E${r},${rng("M")},H${r},${rng("O")},"Ya")`, x.unit, ST.dNum); P.n(r, 8, x.p, ST.dRp); P.f(r, 9, `G${r}*H${r}`, x.unit * x.p, ST.dRp); });
+  const gt = H0 + 1 + Math.max(grp.length, 1);
+  if (!grp.length) { P.s(H0 + 1, 3, "Tidak ada transaksi sewa pada periode ini", ST.dText); }
+  const tU = grp.reduce((a, x) => a + x.unit, 0), tI = grp.reduce((a, x) => a + x.unit * x.p, 0);
+  P.s(gt, 2, "Grand Total", ST.tLabel); for (let c = 3; c <= 6; c++) P.e(gt, c, ST.tLabel); P.m(`B${gt}`, `F${gt}`);
+  P.f(gt, 7, `SUM(G${H0 + 1}:G${gt - 1})`, tU, ST.tNum); P.e(gt, 8, ST.tLabel); P.f(gt, 9, `SUM(I${H0 + 1}:I${gt - 1})`, tI, ST.tRp); P.h(gt, 22);
+  P.f(gt + 1, 2, `IF(ROUND(I${gt}-${S2}N${tr},0)=0,"Cocok dengan sheet Rincian Transaksi","PERIKSA: total berbeda dengan sheet Rincian Transaksi (ada durasi/pengali yang diubah), sesuaikan baris pengajuan")`, "Cocok dengan sheet Rincian Transaksi", ST.note);
+  const sr = gt + 3;
+  P.s(sr, 8, `${o.kota}, ${o.tglTtd}`, ST.text);
+  [["B", "D", "Mengajukan,", o.nama, o.jabatan], ["E", "F", "Disetujui,", o.ceo, o.ceoJab], ["H", "I", "Disetujui,", o.fin, o.finJab]].forEach(([a, b, t1, nm, jb]) => {
+    const ca = a.charCodeAt(0) - 64; [[sr + 1, t1, ST.sLabel], [sr + 6, `( ${String(nm || "").toUpperCase()} )`, ST.sName], [sr + 7, jb, ST.sJob]].forEach(([rr, t, st]) => { P.s(rr, ca, t, st); P.m(`${a}${rr}`, `${b}${rr}`); }); });
+  const pb = sr + 10;
+  P.s(pb, 2, "Sumber Dana :", ST.dana); P.s(pb, 8, "Penerima Berkas", ST.box); P.e(pb, 9, ST.box); P.e(pb + 1, 8, ST.box); P.e(pb + 1, 9, ST.box); P.e(pb + 2, 8, ST.box); P.e(pb + 2, 9, ST.box); P.m(`H${pb}`, `I${pb + 2}`);
+  const sheet1 = P.xml({ cols: [1.8, 15, 17, 14, 12, 14, 12, 16, 18, 3], noGrid: true, tab: true, drawing: true, fit: true });
+
+  // ---------- gambar logo ----------
+  const px2emu = 9525, anchor = (id, col, row, w, h, rid) => `<xdr:oneCellAnchor><xdr:from><xdr:col>${col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="${w * px2emu}" cy="${h * px2emu}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${id}" name="Logo ${id}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${w * px2emu}" cy="${h * px2emu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`;
+  const lh = 110, l1w = Math.round(LOGO_MADINAH.w * lh / LOGO_MADINAH.h), l2w = Math.round(LOGO_MFLASH.w * 120 / LOGO_MFLASH.h);
+  const drawing = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${anchor(2, 5, 0, l1w, lh, "rId1")}${anchor(3, 7, 0, l2w, 120, "rId2")}</xdr:wsDr>`;
+  const NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+  const files = [
+    ["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>`],
+    ["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+    ["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0"/></bookViews><sheets><sheet name="PENGAJUAN" sheetId="1" r:id="rId1"/><sheet name="Rincian Transaksi" sheetId="2" r:id="rId2"/></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="1" hidden="1">'Rincian Transaksi'!$A$1:$P$${last}</definedName><definedName name="_xlnm.Print_Area" localSheetId="0">PENGAJUAN!$A$1:$J$${pb + 3}</definedName><definedName name="_xlnm.Print_Titles" localSheetId="1">'Rincian Transaksi'!$1:$1</definedName></definedNames><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>`],
+    ["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+    ["xl/styles.xml", STYLES],
+    ["xl/worksheets/sheet1.xml", sheet1],
+    ["xl/worksheets/_rels/sheet1.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>`],
+    ["xl/worksheets/sheet2.xml", sheet2],
+    ["xl/drawings/drawing1.xml", drawing],
+    ["xl/drawings/_rels/drawing1.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/logo1.png"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/logo2.png"/></Relationships>`],
+    ["xl/media/logo1.png", b64bytes(LOGO_MADINAH.b64)],
+    ["xl/media/logo2.png", b64bytes(LOGO_MFLASH.b64)],
+  ];
+  return { blob: zipStore(files), total: tI, unit: tU, baris: grp.length };
+}
+
+/* logo untuk form Pengajuan Insentif (PNG base64) */
+const LOGO_MADINAH = { w: 240, h: 171, b64: "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" };
+const LOGO_MFLASH = { w: 300, h: 268, b64: "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" };
+const PJ_DEF = { nama: "Toni Nugroho", jabatan: "Manager Pilar Sewa", ceo: "Zaskanul Tibalky", ceoJab: "CEO MFlash", fin: "Galih Permana", finJab: "Finance", kota: "Jakarta", tglSerah: "", bank: "", rekening: "" };
+const PJ_ALAMAT = ["Ruko Madinah Office, Blok C4, Jl. Pd. Kelapa Raya No.1B,", "Malaka Jaya, Kec. Duren Sawit, Kota Jakarta Timur,", "DKI Jakarta 13460"];
+const pjData = () => ({ ...PJ_DEF, ...(LS.get("mfdc-pengajuan") || {}) });
+function insentifCard(rin, label) {
+  const list = insentifPerSales(rin), t = list.reduce((o, r) => (o.u += r.unit, o.u25 += r.u25, o.u5 += r.u5, o.g += r.gp, o.i += r.ins, o.f += r.trx, o), { u: 0, u25: 0, u5: 0, g: 0, i: 0, f: 0 });
+  const tanpa = rin.filter(r => !r.diajukan), pj = pjData();
+  const fld = (k, lab, w = 190, ph = "") => `<label style="display:grid;gap:4px;font-weight:600;font-size:13px">${lab}<input data-pj="${k}" value="${esc(pj[k])}" placeholder="${esc(ph)}" style="width:${w}px"></label>`;
+  return `<div class="card" id="insCard"><h3>Insentif sewa per sales <span class="pill ok">${rp(t.i)}</span></h3>
+    <p class="sub">${esc(label)} · Pengali per unit: <b>sewa bulanan Rp ${fmtN(INS.tinggi)}</b>; harian/mingguan <b>Rp ${fmtN(INS.tinggi)}</b> bila gross profit per unit ≥ Rp ${fmtN(INS.batasGP)}, selain itu <b>Rp ${fmtN(INS.rendah)}</b>. Durasi ditebak dari harga per unit (≥ Rp ${fmtN(INS.batasBulanan)} = bulanan) karena Accurate tidak mencatatnya; bisa dikoreksi di file pengajuan. Nama sales dari kolom <b>${esc(BASIS[SB])}</b>.</p>
+    ${barList("Pencapaian insentif sewa", label, list.map(r => ({ c: r.sales, v: r.ins, sub: r.cabang, note: `${fmtN(r.u25)} × 25rb + ${fmtN(r.u5)} × 5rb` })), rp, { maxH: 420 })}
+    <div class="tablebox" style="max-height:420px"><table><thead><tr><th>Sales</th><th>Cabang</th><th class="num">Unit tersewa</th><th class="num">Unit × 25rb</th><th class="num">Unit × 5rb</th><th class="num">Faktur sewa</th><th class="num">GP sewa</th><th class="num">Insentif</th></tr></thead><tbody>
+    ${list.map(r => `<tr><td class="cab">${esc(r.sales)}</td><td style="white-space:normal;min-width:120px">${esc(r.cabang)}</td><td class="num"><b>${fmtN(r.unit)}</b></td><td class="num">${fmtN(r.u25)}</td><td class="num">${fmtN(r.u5)}</td><td class="num">${fmtN(r.trx)}</td><td class="num">${rp(r.gp)}</td><td class="num"><b>${rp(r.ins)}</b></td></tr>`).join("") || `<tr><td colspan="8" class="sub">Belum ada penjualan unit sewa pada filter ini.</td></tr>`}
+    ${list.length > 1 ? `<tr class="tot"><td colspan="2">TOTAL</td><td class="num">${fmtN(t.u)}</td><td class="num">${fmtN(t.u25)}</td><td class="num">${fmtN(t.u5)}</td><td class="num">${fmtN(t.f)}</td><td class="num">${rp(t.g)}</td><td class="num">${rp(t.i)}</td></tr>` : ""}</tbody></table></div>
+    ${tanpa.length ? `<div class="notice warn">${fmtN(tanpa.length)} transaksi sewa (${fmtN(tanpa.reduce((a, r) => a + r.unit, 0))} unit) belum punya nama sales di Accurate, jadi tidak ikut pengajuan: ${tanpa.map(r => esc(r.cabang + " " + r.no_faktur)).join(", ")}.</div>` : ""}
+    <h3 style="margin-top:16px">Unduh form Pengajuan Insentif</h3>
+    <p class="sub">Satu klik menghasilkan file Excel form PENGAJUAN BIAYA (logo, tabel per sales & cabang, tanda tangan) plus sheet Rincian Transaksi. Isian di bawah tersimpan di browser ini saja.</p>
+    <div class="toolbar" style="align-items:end;flex-wrap:wrap;background:var(--accent-soft);border-radius:var(--r);padding:10px 12px">
+      ${fld("nama", "Mengajukan")}${fld("jabatan", "Jabatan")}${fld("ceo", "Disetujui (1)")}${fld("ceoJab", "Jabatan", 140)}${fld("fin", "Disetujui (2)")}${fld("finJab", "Jabatan", 140)}
+      ${fld("kota", "Kota", 120)}${fld("tglSerah", "Tgl penyerahan dokumen", 150, "mis. 05-11-2026")}${fld("bank", "Bank / atas nama", 190, "mis. BSI / NAMA")}${fld("rekening", "No rekening", 150)}
+      <button class="primary" id="pjDl"${t.i ? "" : " disabled"}>Unduh Pengajuan Insentif</button>
+    </div></div>`;
+}
+function bindPengajuan(el, rin, dari, sampai) {
+  const b = $("#pjDl", el); if (!b) return;
+  $$("[data-pj]", el).forEach(i => i.onchange = () => { const o = LS.get("mfdc-pengajuan") || {}; o[i.dataset.pj] = i.value.trim(); LS.set("mfdc-pengajuan", o); });
+  b.onclick = () => {
+    const pj = pjData(); $$("[data-pj]", el).forEach(i => pj[i.dataset.pj] = i.value.trim());
+    const now = new Date(), satu = /^\d{4}-\d{2}$/.test(D.bulan);
+    const per = satu ? namaBulan(D.bulan) : periodeLabel();
+    const o = { ...pj, alamat1: PJ_ALAMAT[0], alamat2: PJ_ALAMAT[1], alamat3: PJ_ALAMAT[2], periode: per + (D.cab ? " · " + D.cab : ""), periodeSingkat: satu ? `${BLN[+D.bulan.slice(5) - 1].slice(0, 3)}-${D.bulan.slice(2, 4)}` : per,
+      tglTtd: `${now.getDate()} ${BLN[now.getMonth()]} ${now.getFullYear()}`, basisLabel: BASIS[SB] };
+    const x = buatPengajuanXlsx(rin, o);
+    const nm = `Pengajuan-Insentif-Sewa-${satu ? per.replace(" ", "-") : (dari || "awal") + "_" + (sampai || "akhir")}${D.cab ? "-" + D.cab.replace(/[^\w]+/g, "-") : ""}.xlsx`;
+    unduhBlob(x.blob, nm); toast(`Pengajuan insentif diunduh: ${fmtN(x.unit)} unit, ${rp(x.total)}.`);
   };
 }
 const basisSelect = () => `<label class="sub" style="display:flex;gap:6px;align-items:center">Nama sales dari<select id="fBasis" aria-label="Basis nama sales">${Object.entries(BASIS).map(([k, v]) => `<option value="${k}"${k === SB ? " selected" : ""}>${v}</option>`).join("")}</select></label>`;
@@ -462,15 +664,14 @@ async function pageSales(el) {
   const [dari, sampai] = periode();
   const args = { p_dari: dari || null, p_sampai: sampai || null };
   const pil = D.pilar ? [D.pilar] : null;
-  const [known, rows, rowsAll, ins, pinOn] = await Promise.all([
+  const [known, rows, rowsAll, rin] = await Promise.all([
     db.rpc("gp_cabang_pilar", { p_dari: null, p_sampai: null }),
     db.rpc("pencapaian_sales", salesArgs(args, pil)),
     pil ? db.rpc("pencapaian_sales", salesArgs(args, null)) : null,
-    db.rpc("insentif_sewa").catch(() => ({ per_unit: 0 })), db.rpc("pin_aktif").catch(() => false)]);
+    db.rpc("insentif_sewa_rincian", { ...args, p_cabang: D.cab || null, p_basis: SB }).then(hitungInsentif).catch(() => [])]);
   const allPilars = sortPilar([...new Set(known.map(r => r.pilar))]);
-  const tarif = +ins.per_unit || 0;
   const sewaRows = rowsAll || rows;
-  const insBy = new Map(sewaRows.map(r => [r.sales, +r.unit_sewa * tarif]));
+  const insBy = new Map(insentifPerSales(rin).map(r => [r.sales, r.ins]));
   const T = rows.reduce((o, r) => (o.rev += +r.omzet, o.gp += +r.gross_profit, o.inv += +r.jumlah_faktur, o.pel += +r.pelanggan, o), { rev: 0, gp: 0, inv: 0, pel: 0 });
   const sorted = [...rows].sort((a, b) => b.gross_profit - a.gross_profit);
   const named = sorted.filter(r => r.sales !== "TANPA NAMA SALES");
@@ -489,7 +690,7 @@ async function pageSales(el) {
     ${barList("Gross profit per sales", label, named.map(r => ({ c: r.sales, v: +r.gross_profit, sub: r.cabang })), rp)}
     ${barList("Unit sewa per sales", [D.cab || "Semua cabang", periodeLabel()].join(" · ") + " · pilar SEWA", sewaRows.filter(r => r.sales !== "TANPA NAMA SALES").map(r => ({ c: r.sales, v: +r.unit_sewa, sub: r.cabang })), v => fmtN(v) + " unit")}
   </div>
-  ${insentifCard(sewaRows, ins, pinOn, [D.cab || "Semua cabang", periodeLabel()].join(" · "))}
+  ${insentifCard(rin, [D.cab || "Semua cabang", periodeLabel()].join(" · "))}
   <div class="card"><h3>Laporan pencapaian per sales</h3><p class="sub">${esc(label)} · nama sales dari kolom ${esc(BASIS[SB])}. Satu sales yang melayani di beberapa cabang digabung.</p>
     <div class="tablebox" style="max-height:560px"><table><thead><tr><th>#</th><th>Sales</th><th>Cabang</th><th class="num">Faktur</th><th class="num">Pelanggan</th><th class="num">Omzet</th><th class="num">HPP</th><th class="num">Gross profit</th><th class="num">Margin</th><th class="num">Unit sewa</th><th class="num">GP Maintenance</th><th class="num">Corporate maint.</th><th class="num">Insentif sewa</th></tr></thead><tbody>
     ${sorted.map((r, i) => `<tr><td class="num">${i + 1}</td><td class="cab">${esc(r.sales)}</td><td style="white-space:normal;min-width:120px">${esc(r.cabang)}</td><td class="num">${fmtN(r.jumlah_faktur)}</td><td class="num">${fmtN(r.pelanggan)}</td><td class="num">${rp(r.omzet)}</td><td class="num">${rp(r.hpp)}</td><td class="num"><b>${rp(r.gross_profit)}</b></td><td class="num">${mPill(+r.omzet ? r.gross_profit / r.omzet : 0, +r.omzet)}</td><td class="num">${fmtN(r.unit_sewa)}</td><td class="num">${rp(r.gp_maintenance)}</td><td class="num">${fmtN(r.corporate_maintenance)}</td><td class="num">${rp(insBy.get(r.sales) || 0)}</td></tr>`).join("") || `<tr><td colspan="13" class="sub">Tidak ada data.</td></tr>`}
@@ -497,16 +698,16 @@ async function pageSales(el) {
     ${rows.some(r => r.sales === "TANPA NAMA SALES") ? `<p class="sub">"TANPA NAMA SALES" = faktur yang kolom penjualnya kosong di Accurate.</p>` : ""}</div>
   </div>`;
   const re = () => pageSales(el);
-  bindFilter(el, re); bindBasis(el, re); bindInsentif(el, pinOn, re);
+  bindFilter(el, re); bindBasis(el, re); bindPengajuan(el, rin, dari, sampai);
   const ca = $("#corpAll", el); if (ca) ca.onchange = () => { CORP_ALL = ca.checked; re(); };
   const all = $("#dAll", el); if (all) all.onclick = () => { D.bulan = "semua"; re(); };
   $("#sDl", el).onclick = () => {
     const wb = XLSX.utils.book_new();
-    const info = [["Laporan", "Pencapaian per Sales"], ["Filter", label], ["Nama sales dari", BASIS[SB]], ["Tarif insentif sewa", tarif], ["Rumus insentif", "Unit tersewa (QTY barang SEWA/LAPTOP di pilar SEWA) × tarif per unit"], ["Dibuat", fmtDateTime(new Date())]];
+    const info = [["Laporan", "Pencapaian per Sales"], ["Filter", label], ["Nama sales dari", BASIS[SB]], ["Rumus insentif", `Per unit sewa (QTY barang SEWA/LAPTOP di pilar SEWA): Rp ${fmtN(INS.tinggi)} bila sewa bulanan (harga/unit ≥ Rp ${fmtN(INS.batasBulanan)}) atau GP/unit ≥ Rp ${fmtN(INS.batasGP)}; selain itu Rp ${fmtN(INS.rendah)}`], ["Dibuat", fmtDateTime(new Date())]];
     const ws0 = XLSX.utils.aoa_to_sheet(info); ws0["!cols"] = [{ wch: 22 }, { wch: 70 }]; XLSX.utils.book_append_sheet(wb, ws0, "Keterangan");
     const ws1 = XLSX.utils.json_to_sheet(sorted.map((r, i) => ({ "PERINGKAT": i + 1, "SALES": r.sales, "CABANG": r.cabang, "FAKTUR": +r.jumlah_faktur, "PELANGGAN": +r.pelanggan, "OMZET": +r.omzet, "HPP": +r.hpp, "GROSS PROFIT": +r.gross_profit, "UNIT SEWA": +r.unit_sewa, "GP MAINTENANCE": +r.gp_maintenance, "CORPORATE MAINTENANCE": +r.corporate_maintenance, "TARGET CORPORATE": TARGET_CORP_SALES * bulanPeriode(), "% CAPAI CORPORATE": +(+r.corporate_maintenance / (TARGET_CORP_SALES * bulanPeriode())).toFixed(3), "INSENTIF SEWA": insBy.get(r.sales) || 0 })));
     ws1["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 24 }, ...Array(9).fill({ wch: 16 })]; XLSX.utils.book_append_sheet(wb, ws1, "Pencapaian Sales");
-    const ws2 = XLSX.utils.json_to_sheet(sewaRows.filter(r => +r.unit_sewa > 0).sort((a, b) => b.unit_sewa - a.unit_sewa).map(r => ({ "SALES": r.sales, "CABANG": r.cabang, "UNIT TERSEWA": +r.unit_sewa, "FAKTUR SEWA": +r.faktur_sewa, "OMZET SEWA": +r.omzet_sewa, "GP SEWA": +r.gp_sewa, "TARIF PER UNIT": tarif, "INSENTIF": +r.unit_sewa * tarif })));
+    const ws2 = XLSX.utils.json_to_sheet(insentifPerSales(rin).map(r => ({ "SALES": r.sales, "CABANG": r.cabang, "UNIT TERSEWA": r.unit, "UNIT × 25RB": r.u25, "UNIT × 5RB": r.u5, "FAKTUR SEWA": r.trx, "GP SEWA": Math.round(r.gp), "INSENTIF": r.ins })));
     ws2["!cols"] = [{ wch: 28 }, { wch: 24 }, ...Array(6).fill({ wch: 16 })]; XLSX.utils.book_append_sheet(wb, ws2, "Insentif Sewa");
     saveWb(wb, `MFlash-Pencapaian-Sales-${(dari || "awal").replace(/-/g, "")}-${(sampai || "akhir").replace(/-/g, "")}.xlsx`);
   };
@@ -627,12 +828,33 @@ async function exportRekon(key, cab, dari, sampai, onStep = () => {}) {
   if (ring.length) { const t = { "CABANG": "TOTAL" }; for (const k of Object.keys(ring[0])) if (k !== "CABANG") t[k] = k === "MARGIN %" ? null : ring.reduce((a, r) => a + (+r[k] || 0), 0); if (t["OMZET"]) t["MARGIN %"] = +(t["GROSS PROFIT"] / t["OMZET"] * 100).toFixed(1); ring.push(t); }
   const per = dari || sampai ? `${dari ? fmtDate(dari) : "awal"} – ${sampai ? fmtDate(sampai) : "sekarang"}` : "Semua periode";
   const info = [["Laporan", title], ["Cabang", cab || "Semua cabang"], ["Periode", per], ["Pilar", pil ? pil.join(", ") : "Semua"], ["Dibuat", fmtDateTime(new Date())], [], ["Cara hitung", "Gross profit = TOTAL HARGA − HARGA BELI (Accurate) − BIAYA SEWA VENDOR"], ["Biaya sewa vendor", "Total Faktur Pembelian barang SEWA per cabang per bulan, dibagi ke penjualan pilar SEWA cabang & bulan yang sama sesuai QTY"], ["Rekonsiliasi", "Cocokkan NO FAKTUR dan TOTAL HARGA di sheet Rincian dengan laporan Rincian Faktur Penjualan di Accurate pada filter yang sama"]];
+  if (key === "sewa") info.push(["Ringkasan per Sales", `Unit tersewa (QTY barang SEWA/LAPTOP) dan gross profit sewa per sales. Nama sales dari kolom ${BASIS[SB]} (bisa diganti di menu Pencapaian Sales). Insentif per unit: Rp 25.000 untuk sewa bulanan atau GP/unit ≥ Rp 100.000, selain itu Rp 5.000 (sama dengan form Pengajuan Insentif).`]);
   if (key === "sewa") info.push(["Unit milik sendiri", "Dari Rincian Pemindahan Barang (gudang tujuan/dari mengandung SEWA). Dicocokkan ke faktur sewa cabang & tanggal yang sama, karena laporan pemindahan tidak memuat nomor faktur"]);
   if (key === "service") info.push(["Corporate termaintenance", "Jumlah pelanggan (ID pelanggan per cabang) yang bertransaksi; satu perusahaan dihitung satu"]);
   const wsInfo = XLSX.utils.aoa_to_sheet(info); wsInfo["!cols"] = [{ wch: 26 }, { wch: 110 }];
   XLSX.utils.book_append_sheet(wb, wsInfo, "Keterangan");
   const wsR = XLSX.utils.json_to_sheet(ring); wsR["!cols"] = Object.keys(ring[0] || { CABANG: 1 }).map(k => ({ wch: Math.max(12, k.length + 2) }));
   XLSX.utils.book_append_sheet(wb, wsR, "Ringkasan per Cabang");
+  if (key === "sewa") {
+    // Ringkasan per sales: unit tersewa & gross profit sewa yang tercipta per sales
+    onStep("Menghitung unit & gross profit per sales…");
+    const [ps, ins] = await Promise.all([
+      db.rpc("pencapaian_sales", { p_dari: dari || null, p_sampai: sampai || null, p_cabang: cab || null, p_pilar: ["SEWA"], p_basis: SB }),
+      db.rpc("insentif_sewa_rincian", { p_dari: dari || null, p_sampai: sampai || null, p_cabang: cab || null, p_basis: SB }).then(hitungInsentif).catch(() => [])]);
+    const insS = new Map(insentifPerSales(ins).map(r => [r.sales, r]));
+    const sl = ps.filter(r => +r.jumlah_faktur > 0).sort((a, b) => b.unit_sewa - a.unit_sewa || b.gross_profit - a.gross_profit);
+    const out = sl.map((r, i) => ({ "PERINGKAT": i + 1, "SALES": r.sales, "CABANG": r.cabang, "FAKTUR SEWA": +r.faktur_sewa, "PELANGGAN": +r.pelanggan, "UNIT TERSEWA": +r.unit_sewa,
+      "OMZET SEWA": +r.omzet, "HPP (HARGA BELI + VENDOR)": +r.hpp, "GROSS PROFIT SEWA": +r.gross_profit, "MARGIN": +r.omzet ? +(r.gross_profit / r.omzet).toFixed(3) : 0,
+      "GP PER UNIT": +r.unit_sewa ? Math.round(r.gross_profit / r.unit_sewa) : 0, "UNIT × 25RB": insS.get(r.sales)?.u25 || 0, "UNIT × 5RB": insS.get(r.sales)?.u5 || 0, "INSENTIF SEWA": insS.get(r.sales)?.ins || 0 }));
+    const sum = k => out.reduce((a, o) => a + (+o[k] || 0), 0);
+    if (out.length) out.push({ "PERINGKAT": "", "SALES": "TOTAL", "CABANG": "", "FAKTUR SEWA": sum("FAKTUR SEWA"), "PELANGGAN": sum("PELANGGAN"), "UNIT TERSEWA": sum("UNIT TERSEWA"),
+      "OMZET SEWA": sum("OMZET SEWA"), "HPP (HARGA BELI + VENDOR)": sum("HPP (HARGA BELI + VENDOR)"), "GROSS PROFIT SEWA": sum("GROSS PROFIT SEWA"),
+      "MARGIN": sum("OMZET SEWA") ? +(sum("GROSS PROFIT SEWA") / sum("OMZET SEWA")).toFixed(3) : 0,
+      "GP PER UNIT": sum("UNIT TERSEWA") ? Math.round(sum("GROSS PROFIT SEWA") / sum("UNIT TERSEWA")) : 0, "UNIT × 25RB": sum("UNIT × 25RB"), "UNIT × 5RB": sum("UNIT × 5RB"), "INSENTIF SEWA": sum("INSENTIF SEWA") });
+    const wsS = XLSX.utils.json_to_sheet(out.length ? out : [{ "SALES": "Belum ada penjualan pilar SEWA pada filter ini" }]);
+    wsS["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 26 }, { wch: 12 }, { wch: 11 }, { wch: 13 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 9 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, wsS, "Ringkasan per Sales");
+  }
   const rekCols = key === "sewa" ? REK_COLS.flatMap(c => c[0] === "biaya_vendor" ? [c, ["vendor", "VENDOR / SUPPLIER"]] : [c]) : REK_COLS;
   XLSX.utils.book_append_sheet(wb, sheetRows(rows, rekCols, "TOTAL"), "Rincian Faktur Penjualan");
   if (key === "service") {
@@ -674,7 +896,7 @@ async function pageUnduh(el) {
     <div class="notice" id="rIsi"></div>
     <div class="toolbar"><button class="primary" id="rBtn">Unduh Excel</button><span class="sub" id="rMsg" role="status"></span></div>
   </section>`;
-  const isi = () => { const k = $("#rJenis", el).value; $("#rIsi", el).innerHTML = `<b>Isi file:</b> Keterangan (filter &amp; cara hitung) · Ringkasan per Cabang · Rincian Faktur Penjualan (per baris, dengan total)` + (k === "sewa" ? " · Pembelian SEWA (Vendor) · Biaya Vendor per Bulan · Unit Milik Sendiri (dari Pemindahan Barang)" : k === "service" ? " · Daftar Corporate" : ""); };
+  const isi = () => { const k = $("#rJenis", el).value; $("#rIsi", el).innerHTML = `<b>Isi file:</b> Keterangan (filter &amp; cara hitung) · Ringkasan per Cabang · Rincian Faktur Penjualan (per baris, dengan total)` + (k === "sewa" ? " · Ringkasan per Sales (unit, GP, insentif) · Pembelian SEWA (Vendor) · Biaya Vendor per Bulan · Unit Milik Sendiri (dari Pemindahan Barang)" : k === "service" ? " · Daftar Corporate" : ""); };
   $("#rJenis", el).onchange = () => { LS.set("mfdc-rekon", $("#rJenis", el).value); isi(); };
   isi();
   bindFilter(el, () => pageUnduh(el));
